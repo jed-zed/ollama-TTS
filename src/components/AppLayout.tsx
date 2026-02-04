@@ -1,21 +1,46 @@
-import React from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MessageSquareText, Mic, ScrollText, Settings2, Power, PlugZap } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { NavLink, useLocation, Outlet } from 'react-router-dom';
+import { LayoutDashboard, MessageSquareText, Mic, ScrollText, Settings2, Power, PlugZap, Save, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { useConfigStore } from '@/stores/configStore';
+import { useStreamStore } from '@/stores/streamStore';
+import { streamManager } from '@/services/stream';
 
-interface AppLayoutProps {
-  children: React.ReactNode;
-}
-
-const AppLayout = ({ children }: AppLayoutProps) => {
+const AppLayout = () => {
   const location = useLocation();
+  const loadConfig = useConfigStore((state) => state.loadConfig);
+  const config = useConfigStore((state) => state.config);
+  const setConnectionStatus = useStreamStore((state) => state.setConnectionStatus);
+  const handleStreamEvent = useStreamStore((state) => state.handleStreamEvent);
+
+  // 初始化：加载配置和建立 SSE 连接
+  useEffect(() => {
+    // 加载配置
+    if (!config) {
+      loadConfig();
+    }
+
+    // 建立 SSE 连接
+    streamManager.onStatusChange = (status) => {
+      setConnectionStatus(status);
+    };
+    streamManager.onMessage = (event) => {
+      handleStreamEvent(event);
+    };
+    streamManager.connect();
+
+    return () => {
+      streamManager.disconnect();
+    };
+  }, [config, loadConfig, setConnectionStatus, handleStreamEvent]);
 
   const navItems = [
     { path: '/', label: '服务连接', icon: PlugZap },
     { path: '/subtitles', label: '字幕视觉', icon: MessageSquareText },
-    { path: '/voice', label: '语音合成', icon: Mic },
-    { path: '/logs', label: '运行日志', icon: ScrollText },
+    { path: '/voice', label: '语音配置', icon: Mic },
+    { path: '/memory', label: '记忆管理', icon: Save },
+    { path: '/logs', label: '运行日志', icon: FileText },
   ];
 
   return (
@@ -77,7 +102,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
            <div className="absolute bottom-0 left-0 w-96 h-96 bg-pink-200/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 pointer-events-none"></div>
            
            <div className="flex-1 overflow-auto p-8 relative z-10">
-              {children}
+              <Outlet />
            </div>
         </div>
       </div>

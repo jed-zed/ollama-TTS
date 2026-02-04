@@ -129,3 +129,20 @@
     @apply bg-white/70 backdrop-blur-md border border-white/50;
   }
 }
+
+/* 字幕独立窗口专用样式 - 隐藏滚动条 */
+html.overlay-window,
+html.overlay-window body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
+html.overlay-window #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
