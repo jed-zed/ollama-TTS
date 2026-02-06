@@ -310,7 +310,7 @@ const Memory = () => {
                  </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 flex flex-col gap-4">
-                 <div className="min-h-[150px] bg-white/50 rounded-lg border border-dashed border-gray-300 overflow-auto">
+                 <div className="min-h-[150px] max-h-[300px] bg-white/50 rounded-lg border border-dashed border-gray-300 overflow-y-auto">
                     {characterStatuses.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-muted-foreground text-sm py-8">
                         暂无数据，请点击刷新...

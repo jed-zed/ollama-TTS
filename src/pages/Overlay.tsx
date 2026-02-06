@@ -96,6 +96,7 @@ const Overlay: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [speechConfig, setSpeechConfig] = useState<{ apiKey: string; secretKey: string } | null>(null);
+  const [isUserSent, setIsUserSent] = useState(false);
   
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -169,6 +170,7 @@ const Overlay: React.FC = () => {
     subtitleWindow.onContentUpdate((content) => {
       setStreamContent(content.text);
       setIsStreaming(content.isStreaming);
+      setIsUserSent(false);
       
       if (content.text && !content.isStreaming) {
         setHistory(prev => {
@@ -203,7 +205,7 @@ const Overlay: React.FC = () => {
       autoCloseTimerRef.current = null;
     }
     
-    if (!isStreaming && !isTyping && streamContent && autoClose) {
+    if (!isStreaming && !isTyping && streamContent && autoClose && !isUserSent) {
       autoCloseTimerRef.current = setTimeout(() => {
         handleClose();
       }, autoCloseDelay * 1000);
@@ -215,7 +217,7 @@ const Overlay: React.FC = () => {
         autoCloseTimerRef.current = null;
       }
     };
-  }, [isStreaming, isTyping, streamContent, autoClose, autoCloseDelay]);
+  }, [isStreaming, isTyping, streamContent, autoClose, autoCloseDelay, isUserSent]);
 
   /**
    * 自动滚动到底部（新内容时）
@@ -305,6 +307,7 @@ const Overlay: React.FC = () => {
 
   const handleSend = useCallback(() => {
     if (inputText.trim()) {
+      setIsUserSent(true);
       setStreamContent(inputText.trim());
       navigator.clipboard.writeText(inputText.trim());
       setInputText('');

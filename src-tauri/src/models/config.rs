@@ -227,9 +227,11 @@ pub struct HistoryCompressionConfig {
     pub enabled: bool,
     /// 存档数据路径
     pub save_data_path: String,
-    /// 触发压缩的最大消息数
+    /// 触发压缩的最大轮次数（基于语义轮次）
     pub max_messages: i32,
-    /// 每次压缩的消息数
+    /// 保留最近多少轮对话（新策略：保留最近N轮）
+    pub retain_rounds: i32,
+    /// 每次压缩的消息数（兼容旧配置）
     pub compress_count: i32,
     /// 自动检查间隔（分钟）
     pub check_interval: i32,
@@ -239,6 +241,8 @@ pub struct HistoryCompressionConfig {
     pub backup_dir: String,
     /// 自定义压缩提示词
     pub custom_prompt: String,
+    /// 摘要比例阈值（超过此值触发熔断，防止重复压缩）
+    pub summary_ratio_threshold: f32,
 }
 
 impl Default for HistoryCompressionConfig {
@@ -246,12 +250,14 @@ impl Default for HistoryCompressionConfig {
         Self {
             enabled: false,
             save_data_path: String::new(),
-            max_messages: 100,
+            max_messages: 300,
+            retain_rounds: 15,
             compress_count: 50,
             check_interval: 30,
             backup_before_compress: true,
-            backup_dir: "backups".to_string(),
+            backup_dir: "compression_backups".to_string(),
             custom_prompt: String::new(),
+            summary_ratio_threshold: 0.5,
         }
     }
 }

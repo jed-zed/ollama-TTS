@@ -34,7 +34,7 @@ export async function compressHistory(
  * 压缩所有超过阈值的角色
  */
 export async function compressAll(): Promise<ApiResponse<CompressResponse>> {
-  return apiClient.post<CompressResponse>('/api/memory/compress-all');
+  return apiClient.post<CompressResponse>('/api/memory/compress-all', { force: false });
 }
 
 /**
