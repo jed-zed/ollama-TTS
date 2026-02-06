@@ -15,11 +15,14 @@ import type {
 
 /**
  * 测试 TTS 引擎连接
+ * @param engine 引擎名称
+ * @param url 可选的 API URL（用于测试未保存的配置）
  */
 export async function testTTSEngine(
-  engine: string
+  engine: string,
+  url?: string
 ): Promise<ApiResponse<TTSTestResponse>> {
-  return apiClient.post<TTSTestResponse>('/api/tts/test', { engine } as TTSTestRequest);
+  return apiClient.post<TTSTestResponse>('/api/tts/test', { engine, url });
 }
 
 /**

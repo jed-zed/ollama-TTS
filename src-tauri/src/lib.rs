@@ -2,8 +2,9 @@
 //! 
 //! 提供 Tauri 命令和应用初始化逻辑。
 
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use std::sync::Mutex;
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use std::sync::{Arc, Mutex};
+use tracing_subscriber::prelude::*;
 
 // 模块声明
 pub mod api;
@@ -14,6 +15,7 @@ pub mod services;
 use server::AppState;
 use services::config_store::{ConfigStore, get_default_config_path};
 use services::sse_broadcaster::SseBroadcaster;
+use services::log_layer::BroadcasterLayer;
 
 /// 字幕窗口状态
 struct SubtitleState {
@@ -47,10 +49,9 @@ async fn stop_backend(app: tauri::AppHandle) -> Result<(), String> {
 async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = "subtitle";
     
-    // 如果窗口已存在，直接显示
+    // 如果窗口已存在，直接显示（不获取焦点，避免游戏暂停）
     if let Some(window) = app.get_webview_window(label) {
         window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
 
@@ -90,7 +91,6 @@ async fn close_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
 async fn show_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("subtitle") {
         window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
     } else {
         create_subtitle_window(app).await?;
     }
@@ -168,8 +168,21 @@ async fn set_subtitle_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(),
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // MCP 插件（仅在 debug 模式下启用）
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(tauri_plugin_mcp_gui::init_with_config(
+            tauri_plugin_mcp_gui::PluginConfig::new("OllamaTTS".to_string())
+                .start_socket_server(true)
+                .tcp("127.0.0.1".to_string(), 9999)
+        ));
+    }
+
+    builder
         .manage(Mutex::new(SubtitleState { click_through: false }))
         .invoke_handler(tauri::generate_handler![
             get_backend_url,
@@ -186,7 +199,23 @@ pub fn run() {
             set_subtitle_opacity
         ])
         .setup(|app| {
-            // 初始化日志插件
+            // 初始化 SSE 广播器（需要先创建，用于 tracing layer）
+            let broadcaster = Arc::new(SseBroadcaster::new(100));
+
+            // 初始化 tracing subscriber，将日志转发到 SSE Broadcaster
+            let broadcaster_layer = BroadcasterLayer::new(broadcaster.clone());
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_level(true);
+            
+            let subscriber = tracing_subscriber::registry()
+                .with(tracing_subscriber::filter::LevelFilter::INFO)
+                .with(fmt_layer)
+                .with(broadcaster_layer);
+            
+            let _ = tracing::subscriber::set_global_default(subscriber);
+
+            // 初始化日志插件（用于 log crate 兼容）
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -197,20 +226,33 @@ pub fn run() {
 
             // 初始化配置存储
             let config_path = get_default_config_path();
-            log::info!("Loading config from: {:?}", config_path);
+            tracing::info!("Loading config from: {:?}", config_path);
             let config_store = ConfigStore::new(config_path);
 
-            // 初始化 SSE 广播器
-            let broadcaster = SseBroadcaster::new(100);
-
             // 启动 HTTP 服务器（只启动主 API，代理由用户控制）
-            log::info!("Starting HTTP server...");
-            let app_state = server::spawn_server(config_store, broadcaster);
+            tracing::info!("Starting HTTP server...");
+            let app_state = server::spawn_server_with_broadcaster(config_store, broadcaster);
             
             // 将 AppState 注册到 Tauri 状态管理
             app.manage(app_state);
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { .. } = event {
+                let label = window.label();
+                if label == "main" {
+                    log::info!("Main window close requested, exiting application...");
+                    
+                    let app = window.app_handle();
+                    
+                    if let Some(subtitle_win) = app.get_webview_window("subtitle") {
+                        let _ = subtitle_win.close();
+                    }
+                    
+                    app.exit(0);
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

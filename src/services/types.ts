@@ -16,7 +16,6 @@ export interface GSVCharacter {
   id: string;
   name: string;
   ref_audio_dir: string;
-  ref_audio_json?: string;
   emotion_audio_json?: string;
   gpt_model_path: string;
   sovits_model_path: string;
@@ -28,7 +27,9 @@ export interface HistoryCompressionConfig {
   compress_count: number;
   check_interval: number;
   backup_before_compress: boolean;
-  auto_compress: boolean;
+  backup_dir: string;
+  enabled: boolean;
+  auto_compress?: boolean;
   custom_prompt: string;
 }
 
@@ -60,6 +61,11 @@ export interface Config {
   gsv_default_male_character: string;
   gsv_default_female_character: string;
 
+  // 百度语音配置
+  baidu_app_id: string;
+  baidu_api_key: string;
+  baidu_secret_key: string;
+
   // 讯飞配置
   xunfei_app_id: string;
   xunfei_api_key: string;
@@ -81,6 +87,7 @@ export interface Config {
 
 export interface TTSTestRequest {
   engine: string;
+  url?: string;
 }
 
 export interface TTSTestResponse {
@@ -96,8 +103,12 @@ export interface TTSSynthesizeRequest {
 }
 
 export interface TTSSynthesizeResponse {
-  audio_url: string;
-  duration?: number;
+  success: boolean;
+  error?: string;
+  audio_file?: string;
+  speaker_used?: string;
+  emotion_used?: string;
+  segment_count?: number;
 }
 
 // ========== 流式窗口相关 ==========

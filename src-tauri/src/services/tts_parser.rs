@@ -34,6 +34,10 @@ pub struct StreamingTTSParser {
     is_nsfw: bool,
     /// 默认 segment（单一 speaker 模式）
     default_segment: Option<TtsSegment>,
+    /// 所有 segments 的有序列表（用于顺序匹配）
+    segments_list: Vec<TtsSegment>,
+    /// 当前使用的 segment 索引
+    current_segment_index: usize,
     
     // 阶段2: 流式解析 response
     /// 是否在 response 字段内
@@ -78,6 +82,8 @@ impl StreamingTTSParser {
             segments_map: HashMap::new(),
             is_nsfw: false,
             default_segment: None,
+            segments_list: Vec::new(),
+            current_segment_index: 0,
             in_response: false,
             response_buffer: String::new(),
             dialogue_buffer: String::new(),
@@ -112,6 +118,8 @@ impl StreamingTTSParser {
         self.segments_map.clear();
         self.is_nsfw = false;
         self.default_segment = None;
+        self.segments_list.clear();
+        self.current_segment_index = 0;
         self.in_response = false;
         self.response_buffer.clear();
         self.dialogue_buffer.clear();
@@ -247,47 +255,82 @@ impl StreamingTTSParser {
         // 找到 tts_config 的开始位置
         let tts_start = match self.buffer.find("\"tts_config\"") {
             Some(pos) => pos,
-            None => return,
+            None => {
+                warn!("❌ 未找到 tts_config 字段");
+                return;
+            },
         };
         
-        // 找到 tts_config 后面的第一个 {
-        let brace_start = match self.buffer[tts_start..].find('{') {
-            Some(pos) => tts_start + pos,
-            None => return,
+        // 找到 tts_config 后面的冒号和第一个 {
+        let after_key = &self.buffer[tts_start + "\"tts_config\"".len()..];
+        let colon_pos = match after_key.find(':') {
+            Some(pos) => pos,
+            None => {
+                warn!("❌ tts_config 后未找到冒号");
+                return;
+            },
         };
         
-        // 匹配括号找到完整的对象
-        let mut brace_count = 0;
-        let mut end_pos = brace_start;
-        for (i, c) in self.buffer[brace_start..].chars().enumerate() {
-            match c {
-                '{' => brace_count += 1,
-                '}' => {
-                    brace_count -= 1;
-                    if brace_count == 0 {
-                        end_pos = brace_start + i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let after_colon = &after_key[colon_pos + 1..];
+        let brace_offset = match after_colon.find('{') {
+            Some(pos) => pos,
+            None => {
+                warn!("❌ tts_config 后未找到开始花括号");
+                return;
+            },
+        };
         
-        let tts_config_str = &self.buffer[brace_start..end_pos];
+        let brace_start = tts_start + "\"tts_config\"".len() + colon_pos + 1 + brace_offset;
         
-        match serde_json::from_str::<TtsConfig>(tts_config_str) {
-            Ok(config) => {
+        // 使用 serde_json 的流式解析器来找到正确的 JSON 边界
+        // 这比手动括号匹配更可靠，因为它正确处理所有 JSON 边界情况
+        let remaining = &self.buffer[brace_start..];
+        
+        // 尝试使用 serde_json 直接解析
+        // serde_json::from_str 会在遇到有效 JSON 结束后停止
+        let mut deserializer = serde_json::Deserializer::from_str(remaining).into_iter::<TtsConfig>();
+        
+        match deserializer.next() {
+            Some(Ok(config)) => {
                 self.is_nsfw = config.is_nsfw.unwrap_or(false);
                 
-                // 建立 text_marker -> segment 映射
+                info!("📋 tts_config 解析成功:");
+                info!("   is_nsfw: {}", self.is_nsfw);
+                info!("   speaker: {:?}", config.speaker);
+                info!("   gender: {:?}", config.gender);
+                info!("   emotion: {:?}", config.emotion);
+                info!("   emotion_vector: {:?}", config.emotion_vector);
+                info!("   segments 数量: {:?}", config.segments.as_ref().map(|s| s.len()));
+                
+                if let Some(segments) = &config.segments {
+                    for (i, seg) in segments.iter().enumerate() {
+                        info!("   segment[{}]: speaker={:?}, gender={:?}, text_marker={:?}", 
+                              i, seg.speaker, seg.gender, seg.text_marker);
+                        if let Some(ref vec) = seg.emotion_vector {
+                            let vec_parts: Vec<String> = vec.iter()
+                                .filter(|(_, v)| **v > 0.0)
+                                .map(|(k, v)| format!("{}={:.2}", k, v))
+                                .collect();
+                            info!("      emotion_vector: {}", vec_parts.join(", "));
+                        }
+                    }
+                }
+                
+                // 建立 text_marker -> segment 映射，同时存入有序列表
                 if let Some(segments) = &config.segments {
                     for seg in segments {
+                        // 存入有序列表（用于顺序匹配）
+                        self.segments_list.push(seg.clone());
+                        
+                        // 存入 text_marker 映射（用于精确匹配）
                         if let Some(marker) = &seg.text_marker {
                             if !marker.is_empty() {
                                 self.segments_map.insert(marker.clone(), seg.clone());
+                                info!("   ✅ 添加 segment 映射: text_marker=\"{}\"", marker);
                             }
                         }
                     }
+                    info!("   📋 segments_list 大小: {}", self.segments_list.len());
                 }
                 
                 // 如果没有 segments，使用单一 speaker 格式作为默认配置
@@ -305,14 +348,20 @@ impl StreamingTTSParser {
                     info!("解析 tts_config: 单一 speaker 模式, speaker={:?}, gender={:?}", 
                           config.speaker, config.gender);
                 } else {
-                    info!("解析 tts_config: is_nsfw={}, segments={}", 
-                          self.is_nsfw, self.segments_map.len());
+                    info!("解析 tts_config: is_nsfw={}, segments_map={}, segments_list={}", 
+                          self.is_nsfw, self.segments_map.len(), self.segments_list.len());
                 }
                 
                 self.tts_config = Some(config);
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 warn!("tts_config 解析失败: {}", e);
+                // 输出更多调试信息
+                let preview: String = remaining.chars().take(500).collect();
+                warn!("   JSON 预览: {}...", preview);
+            }
+            None => {
+                warn!("tts_config 解析失败: 没有有效的 JSON 数据");
             }
         }
     }
@@ -361,6 +410,14 @@ impl StreamingTTSParser {
             return;
         }
         
+        info!("🔍 对话匹配: \"{}...\"", dialogue_text.chars().take(30).collect::<String>());
+        info!("   segments_map 大小: {}", self.segments_map.len());
+        if !self.segments_map.is_empty() {
+            for (marker, _) in &self.segments_map {
+                info!("   可用 marker: \"{}\"", marker);
+            }
+        }
+        
         // 查找匹配的 segment（通过 text_marker）
         let mut matched_segment: Option<TtsSegment> = None;
         let mut matched_marker: Option<String> = None;
@@ -370,6 +427,7 @@ impl StreamingTTSParser {
             if dialogue_text.starts_with(marker) || dialogue_text.contains(marker) {
                 matched_segment = Some(seg.clone());
                 matched_marker = Some(marker.clone());
+                info!("   ✅ text_marker 匹配成功: \"{}\"", marker);
                 break;
             }
         }
@@ -399,7 +457,17 @@ impl StreamingTTSParser {
         if matched_segment.is_none() {
             if let Some(default) = &self.default_segment {
                 matched_segment = Some(default.clone());
+                info!("   ✅ 使用默认 segment（单一 speaker 模式）");
             }
+        }
+        
+        // 顺序匹配：使用 segments_list 中的下一个 segment
+        if matched_segment.is_none() && self.current_segment_index < self.segments_list.len() {
+            let seg = self.segments_list[self.current_segment_index].clone();
+            self.current_segment_index += 1;
+            info!("   ✅ 顺序匹配: 使用 segments_list[{}], speaker={:?}, gender={:?}", 
+                  self.current_segment_index - 1, seg.speaker, seg.gender);
+            matched_segment = Some(seg);
         }
         
         // 回退到同角色的下一个 segment
@@ -410,7 +478,7 @@ impl StreamingTTSParser {
                 if seg.speaker.as_ref().map(|s| s == &speaker).unwrap_or(false) {
                     matched_segment = Some(seg.clone());
                     found_marker = Some(marker.clone());
-                    info!("回退匹配: 使用同角色({})的下一个 segment", speaker);
+                    info!("   ✅ 回退匹配: 使用同角色({})的下一个 segment", speaker);
                     break;
                 }
             }
@@ -423,7 +491,7 @@ impl StreamingTTSParser {
         if matched_segment.is_none() && !self.current_speaker.is_empty() {
             if let Some(seg) = self.last_used_segment_by_speaker.get(&self.current_speaker) {
                 matched_segment = Some(seg.clone());
-                info!("回退匹配: 使用{}的上一个 segment（容错）", self.current_speaker);
+                info!("   ✅ 回退匹配: 使用{}的上一个 segment（容错）", self.current_speaker);
             }
         }
         
@@ -436,8 +504,38 @@ impl StreamingTTSParser {
         
         // 构建对话段落
         let segment = if let Some(matched) = matched_segment {
+            // 详细记录匹配到的情感参数
+            info!("   🎭 情感参数识别结果:");
+            info!("      gender: {}", matched.gender.as_ref().map(|g| g.as_str()).unwrap_or("(未设置)"));
+            info!("      emotion: {}", matched.emotion.as_ref().map(|e| e.as_str()).unwrap_or("(未设置)"));
+            if let Some(ref vec) = matched.emotion_vector {
+                let vec_parts: Vec<String> = vec.iter()
+                    .filter(|(_, v)| **v > 0.0)
+                    .map(|(k, v)| format!("{}={:.2}", k, v))
+                    .collect();
+                if !vec_parts.is_empty() {
+                    info!("      emotion_vector: {}", vec_parts.join(", "));
+                } else {
+                    info!("      emotion_vector: (全零或空)");
+                }
+            } else {
+                info!("      emotion_vector: (未设置)");
+            }
+            if let Some(ref desc) = matched.emotion_description {
+                if !desc.is_empty() {
+                    info!("      emotion_description: {}", desc);
+                }
+            }
+            if let Some(speed) = matched.speed {
+                if (speed - 1.0).abs() > 0.01 {
+                    info!("      speed: {:.2}", speed);
+                }
+            }
             DialogueSegment::from_segment(dialogue_text.clone(), self.current_speaker.clone(), &matched, self.is_nsfw)
         } else {
+            warn!("   ❌ 未匹配到任何 segment，使用默认空配置");
+            warn!("      gender: (未设置)");
+            warn!("      emotion_vector: (未设置)");
             DialogueSegment {
                 text: dialogue_text.clone(),
                 speaker: self.current_speaker.clone(),

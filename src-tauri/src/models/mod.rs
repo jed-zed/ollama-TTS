@@ -4,6 +4,8 @@
 
 pub mod config;
 pub mod tts_types;
+pub mod character;
 
 pub use config::*;
 pub use tts_types::*;
+pub use character::*;

@@ -27,7 +27,7 @@ interface TTSState {
   setCurrentInfo: (text: string | null, speaker?: string, emotion?: string) => void;
 
   // API 操作
-  testEngine: (engine: string) => Promise<boolean>;
+  testEngine: (engine: string, url?: string) => Promise<boolean>;
   stopPlayback: () => Promise<void>;
   stopAll: () => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
@@ -54,8 +54,8 @@ export const useTTSStore = create<TTSState>((set, get) => ({
       currentEmotion: emotion ?? null,
     }),
 
-  testEngine: async (engine) => {
-    const response = await ttsService.testTTSEngine(engine);
+  testEngine: async (engine, url) => {
+    const response = await ttsService.testTTSEngine(engine, url);
     const available = response.success && response.data?.available === true;
 
     set((state) => ({

@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import * as memoryService from '@/services/memory';
 import type { MemoryStatus } from '@/services/types';
+import { open } from '@tauri-apps/plugin-dialog';
 
 // 默认压缩提示词模板
 const DEFAULT_PROMPT_TEMPLATE = `请帮我整理压缩以下角色「{character_name}」与玩家「{player_name}」的对话历史。
@@ -152,6 +153,22 @@ const Memory = () => {
     updateConfig('history_compression', updatedConfig);
   }, [config?.history_compression, updateConfig]);
 
+  // 浏览选择存档目录
+  const handleBrowseSavePath = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: '选择存档目录 (save_data)',
+      });
+      if (selected && typeof selected === 'string') {
+        setLocalSavePath(selected);
+      }
+    } catch (e) {
+      console.error('选择目录失败:', e);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -189,7 +206,10 @@ const Memory = () => {
                           className="bg-white/50 font-mono text-xs"
                           placeholder="D:/SteamLibrary/steamapps/common/..."
                        />
-                       <Button className="bg-blue-500 hover:bg-blue-600 text-white min-w-[80px]">
+                       <Button 
+                         className="bg-blue-500 hover:bg-blue-600 text-white min-w-[80px]"
+                         onClick={handleBrowseSavePath}
+                       >
                           <FolderOpen className="w-4 h-4 mr-2" /> 浏览
                        </Button>
                     </div>
@@ -370,9 +390,9 @@ const Memory = () => {
                     可用占位符: {'{character_name}'}, {'{player_name}'}, {'{message_count}'}
                  </CardDescription>
               </CardHeader>
-              <CardContent className="pt-4 space-y-4">
+              <CardContent className="pt-4 space-y-4 flex flex-col">
                  <Textarea
-                    className="bg-white/50 min-h-[200px] font-mono text-xs leading-relaxed resize-y"
+                    className="bg-white/50 min-h-[200px] max-h-[400px] font-mono text-xs leading-relaxed resize-y overflow-y-auto flex-1"
                     value={localPromptTemplate}
                     onChange={(e) => setLocalPromptTemplate(e.target.value)}
                  />

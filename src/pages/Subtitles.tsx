@@ -19,6 +19,8 @@ const fontColorMap: Record<string, string> = {
   pink: '#ec4899',
   yellow: '#eab308',
   cyan: '#06b6d4',
+  gold: '#fbbf24',
+  slate: '#1e293b',
 };
 
 const bgColorMap: Record<string, string> = {
@@ -27,11 +29,14 @@ const bgColorMap: Record<string, string> = {
   dark: '#1e1e1e',
   transparent: 'transparent',
   pink: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
+  darkGold: 'rgba(0,0,0,0.8)',
+  aurora: 'linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(20, 40, 60, 0.9), rgba(10, 50, 60, 0.85))',
+  acrylic: 'rgba(255,255,255,0.85)',
 };
 
 const DEFAULT_SUBTITLE_CONFIG = {
-  subtitle_font_color: '#ffffff',
-  subtitle_bg_color: 'rgba(255,255,255,0.1)',
+  subtitle_font_color: '#ec4899',
+  subtitle_bg_color: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
   subtitle_opacity: 0.9,
   subtitle_font_size: 18,
   char_delay: 30,
@@ -292,6 +297,8 @@ const Subtitles = () => {
                         <SelectItem value="pink">🩷 粉色</SelectItem>
                         <SelectItem value="yellow">🟡 黄色</SelectItem>
                         <SelectItem value="cyan">🩵 青色</SelectItem>
+                        <SelectItem value="gold">🟠 金色</SelectItem>
+                        <SelectItem value="slate">🔵 深蓝灰</SelectItem>
                       </SelectContent>
                     </Select>
                  </div>
@@ -312,6 +319,9 @@ const Subtitles = () => {
                         <SelectItem value="dark">⚫ 深色</SelectItem>
                         <SelectItem value="transparent">🔍 透明</SelectItem>
                         <SelectItem value="pink">🩷 粉色渐变</SelectItem>
+                        <SelectItem value="darkGold">🟤 深邃黑金</SelectItem>
+                        <SelectItem value="aurora">🌌 科技极光</SelectItem>
+                        <SelectItem value="acrylic">💎 亚克力白</SelectItem>
                       </SelectContent>
                     </Select>
                  </div>
@@ -506,63 +516,28 @@ const Subtitles = () => {
                           </div>
                         </div>
 
-                        {/* AI 回复内容区域 */}
+                        {/* AI 回复内容区域 - 只显示当前内容 */}
                         <div className="flex-1 p-6 overflow-auto" role="log" aria-live="polite">
                           <div className="space-y-4">
-                            {history.length === 0 ? (
+                            {!currentContent && !isStreaming ? (
                               <div className="text-center text-muted-foreground py-8">
                                 暂无消息，等待 AI 回复...
                               </div>
                             ) : (
-                              history.map((msg) => (
-                                <div
-                                  key={msg.id}
-                                  className={`p-4 rounded-xl border ${
-                                    msg.is_playing
-                                      ? 'bg-white border-2 border-pink-200 shadow-sm'
-                                      : 'bg-gradient-to-r from-pink-50/50 to-purple-50/50 border-pink-100'
-                                  }`}
-                                >
-                                  <p className="text-slate-700 leading-relaxed">
-                                    {msg.content}
-                                    {msg.is_playing && (
-                                      <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
-                                    )}
-                                  </p>
-                                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100/50">
-                                    <div className="flex items-center gap-3">
-                                      <Button size="sm" className="h-6 px-2 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white text-xs">
-                                        ▶ 播放
-                                      </Button>
-                                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground">
-                                        📋 复制
-                                      </Button>
-                                    </div>
-                                    <span className="text-xs text-muted-foreground">
-                                      {msg.tts_engine || 'GPT-SoVITS'} · {msg.emotion || '默认'}
-                                      {msg.tts_duration && ` · ${msg.tts_duration}s`}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))
-                            )}
-
-                            {/* 正在流式输出 */}
-                            {isStreaming && (
                               <div className="p-4 bg-white rounded-xl border-2 border-pink-200 shadow-sm">
                                 <p className="text-slate-700 leading-relaxed">
                                   {currentContent}
-                                  <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
+                                  {isStreaming && (
+                                    <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
+                                  )}
                                 </p>
-                                <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100">
-                                  <span className="text-xs text-pink-500 flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500 motion-safe:animate-pulse" />
-                                    正在输出...
-                                  </span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {currentSpeaker || 'GPT-SoVITS'} · {currentEmotion || '默认'}
-                                  </span>
-                                </div>
+                                {currentSpeaker && (
+                                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100/50">
+                                    <span className="text-xs text-muted-foreground">
+                                      {currentSpeaker} {currentEmotion && `· ${currentEmotion}`}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -570,8 +545,8 @@ const Subtitles = () => {
 
                         {/* 底部状态栏 */}
                         <div className="px-4 py-2 bg-slate-50 border-t border-pink-100 flex items-center justify-between text-xs text-muted-foreground">
-                          <span>共 {history.length} 条回复</span>
-                          <span>自动滚动: 开启</span>
+                          <span>共 {history.length} 条历史记录</span>
+                          <span>{isStreaming ? '正在输出...' : '等待中'}</span>
                         </div>
                       </div>
                     </TabsContent>

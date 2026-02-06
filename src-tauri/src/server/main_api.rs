@@ -15,6 +15,18 @@ use crate::api::config::{get_config, update_config};
 use crate::api::proxy::{get_proxy_status, start_proxy, stop_proxy, test_proxy, test_stream};
 use crate::api::stream::{stream_events, get_stream_state, clear_stream, get_stream_history, test_stream as test_stream_content};
 use crate::api::logs::{log_stream, get_logs, get_log_stats, clear_logs, export_logs, test_logs};
+use crate::api::chat::chat;
+use crate::api::tts::{synthesize, stop, stop_all, set_volume, get_status, test_engine, diagnose_connection};
+use crate::api::characters::{
+    get_characters, get_character, add_character, update_character, 
+    delete_character, switch_character, reload_characters, get_current_character
+};
+use crate::api::memory::{
+    get_memory_status, compress_file, compress_all, 
+    get_memory_config, update_memory_config, trigger_auto_check, scan_files,
+    get_prompt_template, save_prompt_template, reset_prompt_template
+};
+use crate::api::speech::{test_baidu_connection, recognize_speech};
 
 /// 健康检查响应
 #[derive(Serialize)]
@@ -47,6 +59,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(health_check))
         // 配置 API
         .route("/api/config", get(get_config).put(update_config))
+        // Chat API (前端 AI 助手)
+        .route("/api/chat", post(chat))
         // 代理状态 API
         .route("/api/proxy/status", get(get_proxy_status))
         .route("/api/proxy/start", post(start_proxy))
@@ -65,12 +79,31 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/logs/export", get(export_logs))
         .route("/api/logs/stream", get(log_stream))
         .route("/api/logs/test", post(test_logs))
-        // TODO: 阶段 5 添加 TTS API
-        // .route("/api/tts/synthesize", post(tts_synthesize))
-        // .route("/api/tts/stop", post(tts_stop))
-        // TODO: 阶段 6 添加角色管理 API
-        // .route("/api/characters", get(get_characters).post(add_character))
-        // TODO: 阶段 7 添加记忆压缩 API
-        // .route("/api/memory/status", get(memory_status))
+        // TTS API
+        .route("/api/tts/synthesize", post(synthesize))
+        .route("/api/tts/stop", post(stop))
+        .route("/api/tts/stop-all", post(stop_all))
+        .route("/api/tts/volume", post(set_volume))
+        .route("/api/tts/status", get(get_status))
+        .route("/api/tts/test", post(test_engine))
+        .route("/api/tts/diagnose", post(diagnose_connection))
+        // 角色管理 API
+        .route("/api/characters", get(get_characters).post(add_character))
+        .route("/api/characters/current", get(get_current_character))
+        .route("/api/characters/switch", post(switch_character))
+        .route("/api/characters/reload", post(reload_characters))
+        .route("/api/characters/:id", get(get_character).put(update_character).delete(delete_character))
+        // 记忆压缩 API
+        .route("/api/memory/status", get(get_memory_status))
+        .route("/api/memory/compress", post(compress_file))
+        .route("/api/memory/compress-all", post(compress_all))
+        .route("/api/memory/config", get(get_memory_config).put(update_memory_config))
+        .route("/api/memory/auto-check", post(trigger_auto_check))
+        .route("/api/memory/scan", post(scan_files))
+        .route("/api/memory/prompt-template", get(get_prompt_template).put(save_prompt_template))
+        .route("/api/memory/prompt-template/reset", post(reset_prompt_template))
+        // 语音识别 API
+        .route("/api/speech/baidu/test", post(test_baidu_connection))
+        .route("/api/speech/recognize", post(recognize_speech))
         .with_state(state)
 }

@@ -17,7 +17,7 @@ import React, { useEffect, useState, useMemo, useCallback, useRef, CSSProperties
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { 
   GripHorizontal, X, RotateCcw, MousePointer2, MousePointerClick, 
-  Mic, MicOff, Send, Type, Palette, Clock, Eye, EyeOff
+  Mic, MicOff, Send, Type, Palette, Clock, Eye, EyeOff, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -25,6 +25,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { subtitleWindow, isTauri } from '@/services/tauri';
+import { speechService } from '@/services/speech';
+import { toast } from 'sonner';
+import { Toaster } from '@/components/ui/sonner';
 
 /**
  * 开始窗口拖动（Tauri 2.x）
@@ -57,8 +60,8 @@ interface HistoryItem {
 const DEFAULT_CONFIG: SubtitleConfig = {
   opacity: 90,
   fontSize: 24,
-  fontColor: '#ffffff',
-  bgColor: 'rgba(0,0,0,0.8)',
+  fontColor: '#ec4899',
+  bgColor: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
   charDelay: 30,
 };
 
@@ -89,8 +92,10 @@ const Overlay: React.FC = () => {
   const [autoCloseDelay, setAutoCloseDelay] = useState(5);
   const [autoShow, setAutoShow] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
   const [inputText, setInputText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [speechConfig, setSpeechConfig] = useState<{ apiKey: string; secretKey: string } | null>(null);
   
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -108,6 +113,27 @@ const Overlay: React.FC = () => {
     return () => {
       document.documentElement.classList.remove('overlay-window');
     };
+  }, []);
+
+  useEffect(() => {
+    const loadSpeechConfig = async () => {
+      try {
+        const response = await fetch('http://localhost:8765/api/config');
+        if (response.ok) {
+          const result = await response.json();
+          const configData = result.data || result;
+          if (configData.baidu_api_key && configData.baidu_secret_key) {
+            setSpeechConfig({
+              apiKey: configData.baidu_api_key,
+              secretKey: configData.baidu_secret_key,
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load speech config:', error);
+      }
+    };
+    loadSpeechConfig();
   }, []);
 
   useEffect(() => {
@@ -298,9 +324,45 @@ const Overlay: React.FC = () => {
     }
   }, [handleSend]);
 
-  const handleMicToggle = useCallback(() => {
-    setIsRecording(prev => !prev);
-  }, []);
+  const handleMicToggle = useCallback(async () => {
+    if (isRecognizing) return;
+    
+    if (!isRecording) {
+      if (!speechConfig) {
+        toast.warning('请先在设置中配置百度语音 API');
+        return;
+      }
+      
+      const success = await speechService.startRecording();
+      if (success) {
+        setIsRecording(true);
+        toast.info('开始录音，请说话...');
+      } else {
+        toast.error('无法访问麦克风，请检查权限');
+      }
+    } else {
+      setIsRecording(false);
+      setIsRecognizing(true);
+      
+      try {
+        const audioBlob = await speechService.stopRecording();
+        if (!audioBlob || !speechConfig) {
+          setIsRecognizing(false);
+          return;
+        }
+
+        const result = await speechService.recognize(audioBlob, speechConfig);
+        
+        if (result.success && result.text) {
+          setInputText(prev => prev + result.text);
+        }
+      } catch (error) {
+        console.error('语音识别失败:', error);
+      } finally {
+        setIsRecognizing(false);
+      }
+    }
+  }, [isRecording, isRecognizing, speechConfig]);
 
   const handleClear = useCallback(() => {
     resetTypewriter();
@@ -464,7 +526,7 @@ const Overlay: React.FC = () => {
                 {history.slice(0, 10).reverse().map(item => (
                   <p 
                     key={item.id}
-                    className="leading-relaxed font-medium text-center max-w-full opacity-50"
+                    className="leading-relaxed font-medium text-center max-w-full opacity-50 whitespace-pre-wrap"
                     style={{ 
                       fontSize: `${Math.max(12, config.fontSize - 4)}px`, 
                       color: config.fontColor,
@@ -479,7 +541,7 @@ const Overlay: React.FC = () => {
             
             {/* 当前字幕文本 */}
             <p 
-              className="leading-relaxed font-medium text-center max-w-full"
+              className="leading-relaxed font-medium text-center max-w-full whitespace-pre-wrap"
               style={{ 
                 fontSize: `${config.fontSize}px`, 
                 color: config.fontColor,
@@ -516,10 +578,12 @@ const Overlay: React.FC = () => {
           <Button
             variant="ghost"
             size="icon"
-            className={`w-8 h-8 ${isRecording ? 'text-red-400 bg-red-500/20' : 'opacity-70 hover:opacity-100 hover:bg-white/10'}`}
+            className={`w-8 h-8 ${isRecording ? 'text-red-400 bg-red-500/20 animate-pulse' : isRecognizing ? 'text-blue-400 bg-blue-500/20' : 'opacity-70 hover:opacity-100 hover:bg-white/10'}`}
             onClick={handleMicToggle}
+            disabled={isRecognizing}
+            title={isRecording ? '点击停止录音' : '点击开始语音输入'}
           >
-            {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isRecognizing ? <Loader2 className="w-4 h-4 animate-spin" /> : isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </Button>
 
           {/* 输入框 */}
@@ -554,6 +618,9 @@ const Overlay: React.FC = () => {
       {/* 边角装饰 */}
       <div className="absolute -bottom-0.5 -left-0.5 w-3 h-3 border-b-2 border-l-2 border-pink-400/50 rounded-bl-lg pointer-events-none" />
       <div className="absolute -top-0.5 -right-0.5 w-3 h-3 border-t-2 border-r-2 border-pink-400/50 rounded-tr-lg pointer-events-none" />
+      
+      {/* Toast 通知 */}
+      <Toaster position="top-center" richColors />
     </div>
   );
 };

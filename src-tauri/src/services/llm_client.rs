@@ -131,6 +131,7 @@ impl LlmClient {
     /// # Arguments
     /// * `request` - 聊天请求
     /// * `system_prompt_injection` - 系统提示词注入
+    /// * `base_model` - 配置中的原模型名称，用于判断流式后缀
     /// 
     /// # Returns
     /// 返回 HTTP 响应，可用于流式或非流式处理
@@ -138,9 +139,11 @@ impl LlmClient {
         &self,
         mut request: ChatRequest,
         system_prompt_injection: Option<&str>,
+        base_model: Option<&str>,
     ) -> Result<LlmRequestResult, String> {
         let original_stream = request.stream;
-        let (real_model, force_stream) = detect_fake_stream(&request.model);
+        let base = base_model.unwrap_or(&request.model);
+        let (real_model, force_stream) = detect_fake_stream(&request.model, base);
         let should_stream = original_stream || force_stream;
         let is_fake_stream = !original_stream && force_stream;
         
@@ -169,9 +172,11 @@ impl LlmClient {
         &self,
         request: GenerateRequest,
         system_prompt_injection: Option<&str>,
+        base_model: Option<&str>,
     ) -> Result<LlmRequestResult, String> {
         let original_stream = request.stream;
-        let (real_model, force_stream) = detect_fake_stream(&request.model);
+        let base = base_model.unwrap_or(&request.model);
+        let (real_model, force_stream) = detect_fake_stream(&request.model, base);
         let should_stream = original_stream || force_stream;
         let is_fake_stream = !original_stream && force_stream;
         
@@ -258,24 +263,48 @@ impl LlmClient {
 
 /// 检测假流式模型
 /// 
-/// 如果模型名以特定后缀结尾，移除后缀并返回 true 表示强制流式。
+/// 根据配置中的原模型名称和请求中的模型名称判断是否使用流式。
+/// 
+/// 规则：
+/// - 如果请求模型 = 原模型 + 后缀（如 -preview），则开启真流式，返回原模型名
+/// - 如果请求模型 = 原模型（即使原模型本身包含 -preview），则不开启流式
 /// 
 /// # Arguments
-/// * `model_name` - 模型名称
+/// * `request_model` - 请求中的模型名称
+/// * `base_model` - 配置中的原模型名称
 /// 
 /// # Returns
 /// (真实模型名, 是否强制流式)
-pub fn detect_fake_stream(model_name: &str) -> (String, bool) {
+/// 
+/// # Examples
+/// ```
+/// // 原模型: gemini-3-pro-preview
+/// // 请求: gemini-3-pro-preview -> (gemini-3-pro-preview, false) 不开流式
+/// // 请求: gemini-3-pro-preview-preview -> (gemini-3-pro-preview, true) 开流式
+/// 
+/// // 原模型: gpt-4
+/// // 请求: gpt-4 -> (gpt-4, false) 不开流式
+/// // 请求: gpt-4-preview -> (gpt-4, true) 开流式
+/// ```
+pub fn detect_fake_stream(request_model: &str, base_model: &str) -> (String, bool) {
+    // 如果请求模型和原模型相同，不开启流式
+    if request_model == base_model {
+        info!("请求模型与原模型相同: {} (不开启流式)", request_model);
+        return (request_model.to_string(), false);
+    }
+    
+    // 检查请求模型是否是原模型 + 后缀
     for suffix in FAKE_STREAM_SUFFIXES {
-        if model_name.ends_with(suffix) {
-            let real_model = model_name[..model_name.len() - suffix.len()].to_string();
-            info!("检测到假流式后缀: {} -> {}", model_name, real_model);
-            return (real_model, true);
+        let expected_stream_model = format!("{}{}", base_model, suffix);
+        if request_model == expected_stream_model {
+            info!("检测到流式后缀: {} -> {} (开启流式)", request_model, base_model);
+            return (base_model.to_string(), true);
         }
     }
     
-    info!("使用原始模型名: {} (无后缀)", model_name);
-    (model_name.to_string(), false)
+    // 如果都不匹配，使用请求中的模型名（可能是用户手动指定的其他模型）
+    info!("使用请求中的模型名: {} (不开启流式)", request_model);
+    (request_model.to_string(), false)
 }
 
 /// 从响应数据中提取 response 内容
@@ -314,10 +343,19 @@ mod tests {
     
     #[test]
     fn test_detect_fake_stream() {
-        assert_eq!(detect_fake_stream("gpt-4"), ("gpt-4".to_string(), false));
-        assert_eq!(detect_fake_stream("gpt-4-preview"), ("gpt-4".to_string(), true));
-        assert_eq!(detect_fake_stream("gpt-4-stream"), ("gpt-4".to_string(), true));
-        assert_eq!(detect_fake_stream("gpt-4-fast"), ("gpt-4".to_string(), true));
+        // 原模型: gpt-4
+        assert_eq!(detect_fake_stream("gpt-4", "gpt-4"), ("gpt-4".to_string(), false));
+        assert_eq!(detect_fake_stream("gpt-4-preview", "gpt-4"), ("gpt-4".to_string(), true));
+        assert_eq!(detect_fake_stream("gpt-4-stream", "gpt-4"), ("gpt-4".to_string(), true));
+        assert_eq!(detect_fake_stream("gpt-4-fast", "gpt-4"), ("gpt-4".to_string(), true));
+        
+        // 原模型本身包含 -preview: gemini-3-pro-preview
+        assert_eq!(detect_fake_stream("gemini-3-pro-preview", "gemini-3-pro-preview"), ("gemini-3-pro-preview".to_string(), false));
+        assert_eq!(detect_fake_stream("gemini-3-pro-preview-preview", "gemini-3-pro-preview"), ("gemini-3-pro-preview".to_string(), true));
+        assert_eq!(detect_fake_stream("gemini-3-pro-preview-stream", "gemini-3-pro-preview"), ("gemini-3-pro-preview".to_string(), true));
+        
+        // 请求模型与原模型不同（用户手动指定其他模型）
+        assert_eq!(detect_fake_stream("other-model", "gpt-4"), ("other-model".to_string(), false));
     }
     
     #[test]

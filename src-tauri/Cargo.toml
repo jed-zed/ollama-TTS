@@ -22,6 +22,7 @@ tauri-build = { version = "2.5.3", features = [] }
 tauri = { version = "2.9.5", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -44,6 +45,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
+# Base64 encoding
+base64 = "0.22"
+
 # SSE and async streams
 async-stream = "0.3"
 futures = "0.3"
@@ -56,3 +60,10 @@ once_cell = "1.19"
 regex = "1"
 thiserror = "1.0"
 anyhow = "1.0"
+rand = "0.8"
+
+# Audio playback
+rodio = { version = "0.19", default-features = false, features = ["wav"] }
+
+# MCP 插件
+tauri-plugin-mcp-gui = { path = "../tauri-plugin-mcp" }

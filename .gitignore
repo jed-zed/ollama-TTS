@@ -72,3 +72,11 @@ src-tauri/target/
 
 # Temporary files
 新建 文本文档*.txt
+
+# Test artifacts
+*.png
+test_overlay_*
+
+# Temp files
+kDownloadaireactsrc-tauri
+rc-tauri*

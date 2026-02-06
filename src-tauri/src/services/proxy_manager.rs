@@ -7,13 +7,15 @@ use std::sync::Arc;
 
 use axum::Router;
 use parking_lot::RwLock;
-use tokio::sync::watch;
+use tokio::sync::{watch, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, error, warn};
 
 use crate::server::proxy_api::{self, ProxyAppState};
 use crate::services::config_store::ConfigStore;
 use crate::services::sse_broadcaster::{SseBroadcaster, LogEvent};
+use crate::services::tts_gsv::GPTSoVITSEngine;
+use crate::services::audio_player::TTSManager;
 
 /// 代理服务器状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +46,8 @@ pub struct ProxyServerManager {
     inner: Arc<RwLock<ProxyManagerInner>>,
     config_store: Arc<ConfigStore>,
     broadcaster: Arc<SseBroadcaster>,
+    gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
+    tts_manager: Option<Arc<Mutex<TTSManager>>>,
 }
 
 impl ProxyServerManager {
@@ -56,7 +60,20 @@ impl ProxyServerManager {
             })),
             config_store,
             broadcaster,
+            gsv_engine: None,
+            tts_manager: None,
         }
+    }
+    
+    /// 设置 TTS 服务
+    pub fn set_tts_services(
+        &mut self,
+        gsv_engine: Arc<Mutex<GPTSoVITSEngine>>,
+        tts_manager: Arc<Mutex<TTSManager>>,
+    ) {
+        self.gsv_engine = Some(gsv_engine);
+        self.tts_manager = Some(tts_manager);
+        info!("TTS 服务已注入到代理管理器");
     }
     
     fn broadcast_log(&self, level: &str, message: &str) {
@@ -118,7 +135,17 @@ impl ProxyServerManager {
         let state = ProxyAppState {
             config_store: self.config_store.clone(),
             broadcaster: self.broadcaster.clone(),
+            gsv_engine: self.gsv_engine.clone(),
+            tts_manager: self.tts_manager.clone(),
         };
+        
+        if self.gsv_engine.is_some() && self.tts_manager.is_some() {
+            info!("代理服务器已启用 TTS 功能");
+            self.broadcast_log("INFO", "代理服务器已启用 TTS 功能");
+        } else {
+            warn!("代理服务器未配置 TTS 服务，TTS 功能将不可用");
+            self.broadcast_log("WARN", "代理服务器未配置 TTS 服务，TTS 功能将不可用");
+        }
 
         let cors = CorsLayer::new()
             .allow_origin(Any)

@@ -312,18 +312,57 @@ const Service = () => {
 
   // 处理预设切换
   const handlePresetChange = async (preset: string) => {
-    await updateConfig('current_api_preset', preset);
+    try {
+      const currentPreset = config?.current_api_preset || 'custom';
+      
+      // 预设配置：URL 和模型名称
+      const presetConfigs: Record<string, { url: string; model?: string }> = {
+        local: { url: 'http://127.0.0.1:11434/v1/chat/completions' },
+        siliconflow: { url: 'https://api.siliconflow.cn/v1/chat/completions' },
+        volcengine: { url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions' },
+        ggchan: { url: 'https://gcli.ggchan.dev/v1/chat/completions', model: 'gemini-3-pro-preview' },
+        deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat' },
+        openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions' },
+        openai: { url: 'https://api.openai.com/v1/chat/completions' },
+      };
 
-    // 根据预设自动填充 URL
-    const presetUrls: Record<string, string> = {
-      local: 'http://127.0.0.1:11434/v1',
-      deepseek: 'https://api.siliconflow.cn/v1',
-      openai: 'https://api.openai.com/v1',
-    };
+      // 构建批量更新对象
+      const updates: Record<string, unknown> = {
+        current_api_preset: preset,
+      };
 
-    if (presetUrls[preset]) {
-      setLocalApiUrl(presetUrls[preset]);
-      await updateConfig('api_url', presetUrls[preset]);
+      // 如果从自定义切换到其他预设，先保存当前自定义数据
+      if (currentPreset === 'custom' && preset !== 'custom') {
+        updates.custom_api_url = localApiUrl;
+        updates.custom_api_key = localApiKey;
+        updates.custom_model_name = localModelName;
+      }
+
+      if (preset === 'custom') {
+        // 切换到自定义时，恢复之前保存的自定义数据
+        const customUrl = config?.custom_api_url || '';
+        const customKey = config?.custom_api_key || '';
+        const customModel = config?.custom_model_name || '';
+        updates.api_url = customUrl;
+        updates.api_key = customKey;
+        updates.model_name = customModel;
+        setLocalApiUrl(customUrl);
+        setLocalApiKey(customKey);
+        setLocalModelName(customModel);
+      } else if (presetConfigs[preset]) {
+        const presetConfig = presetConfigs[preset];
+        updates.api_url = presetConfig.url;
+        setLocalApiUrl(presetConfig.url);
+        if (presetConfig.model) {
+          updates.model_name = presetConfig.model;
+          setLocalModelName(presetConfig.model);
+        }
+      }
+
+      // 一次性批量更新
+      await updateConfigBatch(updates);
+    } catch (error) {
+      console.error('切换预设失败:', error);
     }
   };
 
@@ -535,15 +574,20 @@ const Service = () => {
               <Select
                 value={config?.current_api_preset || 'custom'}
                 onValueChange={handlePresetChange}
+                disabled={proxyStatus === 'running'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="选择预设" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="custom">自定义 (Custom)</SelectItem>
-                  <SelectItem value="deepseek">🚀 DeepSeek (硅基流动)</SelectItem>
-                  <SelectItem value="local">本地 Ollama</SelectItem>
-                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="custom">🔧 自定义 (Custom)</SelectItem>
+                  <SelectItem value="siliconflow">🚀 硅基流动 (SiliconFlow)</SelectItem>
+                  <SelectItem value="deepseek">🔮 DeepSeek</SelectItem>
+                  <SelectItem value="volcengine">🌋 火山引擎 (Volcengine)</SelectItem>
+                  <SelectItem value="ggchan">🎁 gg公益站 (Gemini)</SelectItem>
+                  <SelectItem value="openrouter">🌐 OpenRouter</SelectItem>
+                  <SelectItem value="openai">💎 OpenAI</SelectItem>
+                  <SelectItem value="local">🏠 本地 Ollama</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -556,6 +600,7 @@ const Service = () => {
                 onBlur={() => updateConfig('api_url', localApiUrl)}
                 className="bg-white/50"
                 placeholder="http://127.0.0.1:11434/v1"
+                disabled={proxyStatus === 'running'}
               />
             </div>
 
@@ -569,6 +614,7 @@ const Service = () => {
                   onBlur={() => updateConfig('api_key', localApiKey)}
                   className="bg-white/50 pr-10"
                   placeholder="sk-xxxxxxxxxxxxxxxx"
+                  disabled={proxyStatus === 'running'}
                 />
                 <button
                   onClick={() => setShowApiKey(!showApiKey)}
@@ -588,6 +634,7 @@ const Service = () => {
                   onBlur={() => updateConfig('model_name', localModelName)}
                   className="bg-white/50"
                   placeholder="deepseek-ai/DeepSeek-V3"
+                  disabled={proxyStatus === 'running'}
                 />
                 <Button
                   size="icon"
@@ -602,6 +649,11 @@ const Service = () => {
               <p className="text-xs text-muted-foreground">
                 加 -preview: <span className="text-primary cursor-pointer hover:underline" onClick={handleCopyWithPreview}>{localModelName}-preview</span>
               </p>
+              {proxyStatus === 'running' && (
+                <p className="text-xs text-amber-600 mt-2">
+                  ⚠️ 代理服务运行中，请先停止服务再修改配置
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

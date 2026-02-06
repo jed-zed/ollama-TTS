@@ -83,20 +83,20 @@ const THEMES: Record<ThemeKey, ThemeConfig> = {
   },
   aurora: {
     name: '科技极光',
-    containerBorder: 'border-cyan-400/30',
-    toolbarBorder: 'border-cyan-400/20',
-    iconMain: 'text-cyan-400',
-    textMain: 'text-cyan-400',
-    buttonHover: 'hover:bg-cyan-900/30 hover:text-cyan-400',
-    buttonHoverSoft: 'hover:bg-cyan-900/20',
-    resizeHandle: 'text-cyan-500 hover:text-cyan-300',
-    decoration: 'text-cyan-500',
+    containerBorder: 'border-emerald-400/40',
+    toolbarBorder: 'border-cyan-400/30',
+    iconMain: 'text-emerald-400',
+    textMain: 'text-cyan-300',
+    buttonHover: 'hover:bg-cyan-500/20 hover:text-emerald-300',
+    buttonHoverSoft: 'hover:bg-emerald-500/15',
+    resizeHandle: 'text-cyan-400 hover:text-emerald-300',
+    decoration: 'text-emerald-400',
     decorationCorner: 'border-cyan-400',
-    progressBar: 'bg-cyan-400',
-    checkbox: 'data-[state=checked]:bg-cyan-500 data-[state=checked]:border-cyan-500',
-    bgColor: 'linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(51, 65, 85, 0.9))',
-    fontColor: '#22d3ee',
-    svgFill: '#06B6D4'
+    progressBar: 'bg-gradient-to-r from-cyan-400 to-emerald-400',
+    checkbox: 'data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500',
+    bgColor: 'linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(20, 40, 60, 0.9), rgba(10, 50, 60, 0.85))',
+    fontColor: '#5eead4',
+    svgFill: '#34d399'
   },
   light: {
     name: '亚克力白',
@@ -176,10 +176,11 @@ const FloatingSubtitle: React.FC = () => {
 
   // Tauri 环境下自动打开独立窗口
   useEffect(() => {
-    if (subtitleVisible && isTauri() && !tauriWindowOpenedRef.current) {
+    if (!isTauri()) return;
+    
+    if (subtitleVisible && !tauriWindowOpenedRef.current) {
       tauriWindowOpenedRef.current = true;
       subtitleWindow.create().then(() => {
-        // 创建窗口后延迟发送完整配置，确保 Overlay 已加载
         setTimeout(() => {
           if (config) {
             subtitleWindow.emitConfigUpdate({
@@ -192,13 +193,17 @@ const FloatingSubtitle: React.FC = () => {
           }
         }, 500);
       }).catch(console.error);
+    } else if (subtitleVisible && tauriWindowOpenedRef.current) {
+      subtitleWindow.show().catch(console.error);
     }
   }, [subtitleVisible, config]);
 
-  // 重置标记当字幕隐藏时
+  // 隐藏字幕窗口（不关闭，只是隐藏）
   useEffect(() => {
-    if (!subtitleVisible) {
-      tauriWindowOpenedRef.current = false;
+    if (!isTauri()) return;
+    
+    if (!subtitleVisible && tauriWindowOpenedRef.current) {
+      subtitleWindow.hide().catch(console.error);
     }
   }, [subtitleVisible]);
 
@@ -348,6 +353,8 @@ const FloatingSubtitle: React.FC = () => {
   }, [resetTypewriter]);
 
   const handleResetDefaults = useCallback(() => {
+    setCurrentTheme('classic');
+    localStorage.setItem(THEME_STORAGE_KEY, 'classic');
     updateConfig('subtitle_opacity', 0.9);
     updateConfig('subtitle_font_size', 18);
     updateConfig('char_delay', 30);
@@ -585,7 +592,7 @@ const FloatingSubtitle: React.FC = () => {
           <div className={`max-h-40 overflow-auto border-b ${theme.toolbarBorder}`}>
             {history.map((msg) => (
               <div key={msg.id} className={`px-4 py-2 hover:bg-white/10 cursor-pointer border-b ${theme.toolbarBorder} last:border-b-0`}>
-                <p className="text-sm line-clamp-2" style={{ color: fontColor }}>{msg.content}</p>
+                <p className="text-sm line-clamp-2 whitespace-pre-wrap" style={{ color: fontColor }}>{msg.content}</p>
                 <span className="text-xs" style={{ color: fontColor, opacity: 0.5 }}>{msg.speaker || 'AI'}</span>
               </div>
             ))}
@@ -610,7 +617,7 @@ const FloatingSubtitle: React.FC = () => {
           )}
 
           {/* 字幕文本 - 匀速显示 */}
-          <p className="leading-relaxed font-medium relative z-10" role="status" style={{ fontSize: `${fontSize}px`, color: fontColor }}>
+          <p className="leading-relaxed font-medium relative z-10 whitespace-pre-wrap" role="status" style={{ fontSize: `${fontSize}px`, color: fontColor }}>
             {displayedText || '等待 AI 回复...'}
             {(isStreaming || isTyping) && (
               <span className={`inline-block w-2 h-5 ml-1 ${theme.progressBar} align-middle animate-pulse`} aria-hidden="true" />

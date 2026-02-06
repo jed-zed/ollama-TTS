@@ -1,0 +1,23 @@
+# Rust 编译优化配置
+# 加速链接和编译速度
+
+[target.x86_64-pc-windows-msvc]
+# 使用 rust-lld 链接器（Rust 自带，比 MSVC link.exe 更快）
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[build]
+# 增加并行编译任务数（根据 CPU 核心数调整）
+jobs = 8
+
+[profile.dev]
+# 开发模式优化
+# 减少优化级别以加快编译
+opt-level = 0
+# 启用增量编译
+incremental = true
+# 拆分 debug info 加速链接
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+# 依赖包使用更高优化级别（编译一次，受益多次）
+opt-level = 2

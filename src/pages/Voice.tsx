@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Mic2, Play, Square, Settings, Volume2, Wand2, UserPlus, Save, RotateCcw, Mic, FolderOpen, Trash2, AlertTriangle, Plus, ChevronRight, Check, Loader2 } from 'lucide-react';
+import { Mic2, Play, Square, Settings, Volume2, Wand2, UserPlus, Save, RotateCcw, Mic, FolderOpen, Trash2, AlertTriangle, Plus, ChevronRight, Check, Loader2, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -14,7 +14,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useTTSStore } from '@/stores/ttsStore';
+import { synthesize } from '@/services/tts';
 import type { GSVCharacter } from '@/services/types';
+import { open } from '@tauri-apps/plugin-dialog';
 
 const Voice = () => {
   // 从 store 获取状态
@@ -45,6 +47,12 @@ const Voice = () => {
   const [localTopK, setLocalTopK] = useState('50');
   const [localTopP, setLocalTopP] = useState('0.9');
   const [localTemp, setLocalTemp] = useState('1.0');
+
+  // 语音合成测试状态
+  const [testText, setTestText] = useState('你好，这是一段语音合成测试。');
+  const [testEmotion, setTestEmotion] = useState('calm');
+  const [isSynthesizingTest, setIsSynthesizingTest] = useState(false);
+  const [synthesizeResult, setSynthesizeResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // 初始化
   useEffect(() => {
@@ -93,7 +101,7 @@ const Voice = () => {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const available = await testEngine('gpt_sovits');
+      const available = await testEngine('gpt_sovits', localGsvApiUrl || undefined);
       setTestResult(available ? 'success' : 'fail');
     } finally {
       setIsTesting(false);
@@ -112,33 +120,100 @@ const Voice = () => {
     await setTTSVolume(volume);
   }, [updateConfig, setTTSVolume]);
 
-  // 保存角色
+  // 保存角色（使用角色名字作为 ID）
   const handleSaveCharacter = async () => {
     if (!selectedCharacterId || !editingCharacter.name) return;
 
-    const updatedCharacters = {
-      ...characters,
-      [selectedCharacterId]: editingCharacter as GSVCharacter,
-    };
-    await updateConfig('gsv_characters', updatedCharacters);
+    const newName = editingCharacter.name.trim();
+    if (!newName) return;
+
+    // 如果名字改变了，需要更新 ID
+    if (newName !== selectedCharacterId) {
+      // 检查新名字是否已存在
+      if (characters[newName] && newName !== selectedCharacterId) {
+        console.warn('角色名称已存在:', newName);
+        return;
+      }
+      
+      // 删除旧的 ID，添加新的 ID
+      const { [selectedCharacterId]: _, ...rest } = characters;
+      const updatedCharacters = {
+        ...rest,
+        [newName]: { ...editingCharacter, id: newName, name: newName } as GSVCharacter,
+      };
+      await updateConfig('gsv_characters', updatedCharacters);
+      
+      // 如果当前选中的角色是旧 ID，更新为新 ID
+      if (config?.gsv_current_character === selectedCharacterId) {
+        await updateConfig('gsv_current_character', newName);
+      }
+      
+      setSelectedCharacterId(newName);
+    } else {
+      // 名字没变，直接更新
+      const updatedCharacters = {
+        ...characters,
+        [selectedCharacterId]: { ...editingCharacter, id: selectedCharacterId } as GSVCharacter,
+      };
+      await updateConfig('gsv_characters', updatedCharacters);
+    }
   };
 
-  // 添加新角色
+  // 添加新角色（使用当前编辑的配置或创建空角色）
   const handleAddCharacter = async () => {
-    const newId = `char_${Date.now()}`;
-    const newCharacter: GSVCharacter = {
-      id: newId,
-      name: '新角色',
-      ref_audio_dir: '',
-      gpt_model_path: '',
-      sovits_model_path: '',
-    };
+    // 如果当前有编辑中的配置且有名称，使用编辑中的配置
+    const hasEditingData = editingCharacter.name?.trim() || 
+                           editingCharacter.ref_audio_dir || 
+                           editingCharacter.gpt_model_path || 
+                           editingCharacter.sovits_model_path ||
+                           editingCharacter.emotion_audio_json;
+    
+    let newName: string;
+    let newCharacter: GSVCharacter;
+    
+    if (hasEditingData && editingCharacter.name?.trim()) {
+      // 使用用户填写的配置
+      newName = editingCharacter.name.trim();
+      
+      // 检查名字是否已存在
+      if (characters[newName]) {
+        console.warn('角色名称已存在:', newName);
+        return;
+      }
+      
+      newCharacter = {
+        id: newName,
+        name: newName,
+        ref_audio_dir: editingCharacter.ref_audio_dir || '',
+        gpt_model_path: editingCharacter.gpt_model_path || '',
+        sovits_model_path: editingCharacter.sovits_model_path || '',
+        emotion_audio_json: editingCharacter.emotion_audio_json,
+      };
+    } else {
+      // 生成一个唯一的默认名字
+      let baseName = '新角色';
+      newName = baseName;
+      let counter = 1;
+      while (characters[newName]) {
+        newName = `${baseName}${counter}`;
+        counter++;
+      }
+      
+      newCharacter = {
+        id: newName,
+        name: newName,
+        ref_audio_dir: '',
+        gpt_model_path: '',
+        sovits_model_path: '',
+      };
+    }
+    
     const updatedCharacters = {
       ...characters,
-      [newId]: newCharacter,
+      [newName]: newCharacter,
     };
     await updateConfig('gsv_characters', updatedCharacters);
-    setSelectedCharacterId(newId);
+    setSelectedCharacterId(newName);
   };
 
   // 删除角色
@@ -160,6 +235,86 @@ const Voice = () => {
       gsv_top_p: parseFloat(localTopP) || 0.9,
       gsv_temperature: parseFloat(localTemp) || 1.0,
     });
+  };
+
+  // 语音合成测试
+  const handleTestSynthesize = async () => {
+    if (!testText.trim()) {
+      setSynthesizeResult({ success: false, message: '请输入测试文本' });
+      return;
+    }
+
+    setIsSynthesizingTest(true);
+    setSynthesizeResult(null);
+
+    try {
+      const response = await synthesize({
+        text: testText,
+        emotion: testEmotion,
+        speaker: selectedCharacterId || undefined,
+        speed: 1.0,
+      });
+
+      if (response.success && response.data?.success) {
+        setSynthesizeResult({
+          success: true,
+          message: `合成成功！使用角色: ${response.data.speaker_used || '默认'}, 情感: ${response.data.emotion_used || testEmotion}`,
+        });
+      } else {
+        setSynthesizeResult({
+          success: false,
+          message: response.data?.error || response.error || '合成失败',
+        });
+      }
+    } catch (error) {
+      setSynthesizeResult({
+        success: false,
+        message: error instanceof Error ? error.message : '合成请求失败',
+      });
+    } finally {
+      setIsSynthesizingTest(false);
+    }
+  };
+
+  // 浏览选择目录
+  const handleBrowseDirectory = async (field: 'ref_audio_dir') => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: field === 'ref_audio_dir' ? '选择参考音频目录' : '选择目录',
+      });
+      if (selected && typeof selected === 'string') {
+        setEditingCharacter({ ...editingCharacter, [field]: selected });
+      }
+    } catch (e) {
+      console.error('选择目录失败:', e);
+    }
+  };
+
+  // 浏览选择文件
+  const handleBrowseFile = async (field: 'emotion_audio_json' | 'gpt_model_path' | 'sovits_model_path') => {
+    try {
+      const filters = field === 'emotion_audio_json'
+        ? [{ name: 'JSON', extensions: ['json'] }]
+        : field === 'gpt_model_path'
+          ? [{ name: 'Checkpoint', extensions: ['ckpt', 'pt', 'pth'] }]
+          : [{ name: 'Model', extensions: ['pth', 'pt'] }];
+      
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: field === 'emotion_audio_json' ? '选择情感音频配置文件' 
+             : field === 'gpt_model_path' ? '选择 GPT 模型'
+             : '选择 SoVITS 模型',
+        filters,
+      });
+      if (selected && typeof selected === 'string') {
+        setEditingCharacter({ ...editingCharacter, [field]: selected });
+      }
+    } catch (e) {
+      console.error('选择文件失败:', e);
+    }
   };
 
   if (isLoading) {
@@ -387,25 +542,10 @@ const Voice = () => {
                                       </SelectTrigger>
                                       <SelectContent>
                                          {characterList.map((char) => (
-                                           <SelectItem key={char.id} value={char.id}>{char.name}</SelectItem>
-                                         ))}
+                                          <SelectItem key={char.id} value={char.id}>{char.name}</SelectItem>
+                                        ))}
                                       </SelectContent>
                                    </Select>
-                                </div>
-                                <div className="space-y-2">
-                                   <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">参考音频配置</Label>
-                                   <div className="flex items-center gap-2 h-10 bg-white/60 px-3 rounded-md border border-slate-200 shadow-sm">
-                                      <Checkbox
-                                        checked={!!editingCharacter.ref_audio_json}
-                                        className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
-                                      />
-                                      <Input
-                                        className="border-none shadow-none bg-transparent h-8 text-sm focus-visible:ring-0 p-0"
-                                        value={editingCharacter.ref_audio_json || ''}
-                                        onChange={(e) => setEditingCharacter({ ...editingCharacter, ref_audio_json: e.target.value })}
-                                        placeholder="参考音频配置文件"
-                                      />
-                                   </div>
                                 </div>
                              </div>
 
@@ -429,7 +569,7 @@ const Voice = () => {
                                      value={editingCharacter.ref_audio_dir || ''}
                                      onChange={(e) => setEditingCharacter({ ...editingCharacter, ref_audio_dir: e.target.value })}
                                    />
-                                   <Button variant="outline" size="sm" className="w-16 h-9"><FolderOpen className="w-4 h-4" /></Button>
+                                   <Button variant="outline" size="sm" className="w-16 h-9" onClick={() => handleBrowseDirectory('ref_audio_dir')}><FolderOpen className="w-4 h-4" /></Button>
                                 </div>
 
                                 <div className="grid grid-cols-[100px_1fr_auto] gap-3 items-center">
@@ -439,7 +579,7 @@ const Voice = () => {
                                      value={editingCharacter.emotion_audio_json || ''}
                                      onChange={(e) => setEditingCharacter({ ...editingCharacter, emotion_audio_json: e.target.value })}
                                    />
-                                   <Button variant="outline" size="sm" className="w-16 h-9"><FolderOpen className="w-4 h-4" /></Button>
+                                   <Button variant="outline" size="sm" className="w-16 h-9" onClick={() => handleBrowseFile('emotion_audio_json')}><FolderOpen className="w-4 h-4" /></Button>
                                 </div>
 
                                 <div className="grid grid-cols-[100px_1fr_auto] gap-3 items-center">
@@ -449,7 +589,7 @@ const Voice = () => {
                                      value={editingCharacter.gpt_model_path || ''}
                                      onChange={(e) => setEditingCharacter({ ...editingCharacter, gpt_model_path: e.target.value })}
                                    />
-                                   <Button variant="outline" size="sm" className="w-16 h-9"><FolderOpen className="w-4 h-4" /></Button>
+                                   <Button variant="outline" size="sm" className="w-16 h-9" onClick={() => handleBrowseFile('gpt_model_path')}><FolderOpen className="w-4 h-4" /></Button>
                                 </div>
 
                                 <div className="grid grid-cols-[100px_1fr_auto] gap-3 items-center">
@@ -459,7 +599,7 @@ const Voice = () => {
                                      value={editingCharacter.sovits_model_path || ''}
                                      onChange={(e) => setEditingCharacter({ ...editingCharacter, sovits_model_path: e.target.value })}
                                    />
-                                   <Button variant="outline" size="sm" className="w-16 h-9"><FolderOpen className="w-4 h-4" /></Button>
+                                   <Button variant="outline" size="sm" className="w-16 h-9" onClick={() => handleBrowseFile('sovits_model_path')}><FolderOpen className="w-4 h-4" /></Button>
                                 </div>
                              </div>
 
@@ -591,7 +731,169 @@ const Voice = () => {
                                       />
                                    </div>
                                 </div>
+                                
+                                {/* 参考音频配置 */}
+                                <div className="mt-4 pt-4 border-t border-slate-200">
+                                   <div className="flex items-center gap-2 mb-3">
+                                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">参考音频配置</span>
+                                      <span className="text-xs text-slate-400">(设置太多可能导致速度变慢)</span>
+                                   </div>
+                                   <div className="grid grid-cols-3 gap-6">
+                                      <div className="space-y-2">
+                                         <div className="flex justify-between text-xs">
+                                            <span className="text-slate-500">最少音频数</span>
+                                            <span className="font-mono bg-slate-100 px-1 rounded">{config?.gsv_min_ref_audios ?? 2}</span>
+                                         </div>
+                                         <Input
+                                           type="number"
+                                           min={1}
+                                           max={5}
+                                           className="h-8 bg-white/50 text-center text-xs"
+                                           value={config?.gsv_min_ref_audios ?? 2}
+                                           onChange={(e) => updateConfig('gsv_min_ref_audios', parseInt(e.target.value) || 2)}
+                                         />
+                                      </div>
+                                      <div className="space-y-2">
+                                         <div className="flex justify-between text-xs">
+                                            <span className="text-slate-500">最多音频数</span>
+                                            <span className="font-mono bg-slate-100 px-1 rounded">{config?.gsv_max_ref_audios ?? 3}</span>
+                                         </div>
+                                         <Input
+                                           type="number"
+                                           min={1}
+                                           max={5}
+                                           className="h-8 bg-white/50 text-center text-xs"
+                                           value={config?.gsv_max_ref_audios ?? 3}
+                                           onChange={(e) => updateConfig('gsv_max_ref_audios', parseInt(e.target.value) || 3)}
+                                         />
+                                      </div>
+                                      <div className="space-y-2">
+                                         <div className="flex justify-between text-xs">
+                                            <span className="text-slate-500">情感阈值</span>
+                                            <span className="font-mono bg-slate-100 px-1 rounded">{((config?.gsv_emotion_threshold ?? 0.3) * 100).toFixed(0)}%</span>
+                                         </div>
+                                         <Input
+                                           type="number"
+                                           min={0.1}
+                                           max={0.9}
+                                           step={0.1}
+                                           className="h-8 bg-white/50 text-center text-xs"
+                                           value={config?.gsv_emotion_threshold ?? 0.3}
+                                           onChange={(e) => updateConfig('gsv_emotion_threshold', parseFloat(e.target.value) || 0.3)}
+                                         />
+                                      </div>
+                                   </div>
+                                </div>
                              </div>
+                          </CardContent>
+                       </Card>
+
+                       {/* TTS Synthesis Test */}
+                       <Card className="glass border-none shadow-custom overflow-hidden">
+                          <CardHeader className="pb-4">
+                             <CardTitle className="text-base font-semibold flex items-center gap-2">
+                                <span className="w-2 h-6 bg-green-500 rounded-full"></span>
+                                <MessageSquare className="w-4 h-4 text-green-600" />
+                                语音合成测试
+                             </CardTitle>
+                             <CardDescription>输入文本并选择情感进行语音合成测试</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                             <div className="space-y-2">
+                                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">测试文本</Label>
+                                <Textarea
+                                  className="bg-white/60 border-slate-200 min-h-[80px] resize-none"
+                                  placeholder="输入要合成的文本..."
+                                  value={testText}
+                                  onChange={(e) => setTestText(e.target.value)}
+                                />
+                             </div>
+
+                             <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                   <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">情感</Label>
+                                   <Select value={testEmotion} onValueChange={setTestEmotion}>
+                                      <SelectTrigger className="bg-white/60 border-slate-200 h-10">
+                                         <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                         <SelectItem value="calm">平静 (calm)</SelectItem>
+                                         <SelectItem value="happy">开心 (happy)</SelectItem>
+                                         <SelectItem value="angry">愤怒 (angry)</SelectItem>
+                                         <SelectItem value="sad">悲伤 (sad)</SelectItem>
+                                         <SelectItem value="fear">恐惧 (fear)</SelectItem>
+                                         <SelectItem value="surprised">惊讶 (surprised)</SelectItem>
+                                         <SelectItem value="depressed">沮丧 (depressed)</SelectItem>
+                                         <SelectItem value="disgust">厌恶 (disgust)</SelectItem>
+                                      </SelectContent>
+                                   </Select>
+                                </div>
+                                <div className="space-y-2">
+                                   <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">使用角色</Label>
+                                   <Select value={selectedCharacterId} onValueChange={(value) => {
+                                      setSelectedCharacterId(value);
+                                      updateConfig('gsv_current_character', value);
+                                   }}>
+                                      <SelectTrigger className="bg-white/60 border-slate-200 h-10">
+                                         <SelectValue placeholder="当前选中角色" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                         {characterList.map((char) => (
+                                           <SelectItem key={char.id} value={char.id}>{char.name}</SelectItem>
+                                         ))}
+                                      </SelectContent>
+                                   </Select>
+                                </div>
+                             </div>
+
+                             <div className="flex gap-3 items-center">
+                                <Button
+                                  className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-md hover:shadow-lg hover:opacity-90 transition-all"
+                                  onClick={handleTestSynthesize}
+                                  disabled={isSynthesizingTest || !testText.trim()}
+                                >
+                                  {isSynthesizingTest ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                      合成中...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="w-4 h-4 mr-2" />
+                                      合成并播放
+                                    </>
+                                  )}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  className="border-red-200 text-red-600 hover:bg-red-50"
+                                  onClick={handleStopPlayback}
+                                  disabled={!isPlaying}
+                                >
+                                  <Square className="w-4 h-4 mr-1 fill-current" />
+                                  停止
+                                </Button>
+                             </div>
+
+                             {synthesizeResult && (
+                               <div className={`p-3 rounded-lg border text-sm ${
+                                 synthesizeResult.success
+                                   ? 'bg-green-50 border-green-200 text-green-700'
+                                   : 'bg-red-50 border-red-200 text-red-700'
+                               }`}>
+                                 {synthesizeResult.success ? (
+                                   <div className="flex items-center gap-2">
+                                     <Check className="w-4 h-4" />
+                                     {synthesizeResult.message}
+                                   </div>
+                                 ) : (
+                                   <div className="flex items-center gap-2">
+                                     <AlertTriangle className="w-4 h-4" />
+                                     {synthesizeResult.message}
+                                   </div>
+                                 )}
+                               </div>
+                             )}
                           </CardContent>
                        </Card>
                     </TabsContent>

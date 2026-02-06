@@ -31,6 +31,8 @@ interface StreamState {
 
   // 字幕窗口可见性
   subtitleVisible: boolean;
+  // 用户是否手动隐藏了字幕（用于防止自动显示覆盖用户选择）
+  userHiddenSubtitle: boolean;
 
   // 历史记录
   history: StreamMessage[];
@@ -72,6 +74,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   currentEmotion: null,
   isStreaming: false,
   subtitleVisible: false,
+  userHiddenSubtitle: false,
   history: [],
   charDelay: 30,
   autoScroll: true,
@@ -128,13 +131,13 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }
   },
 
-  setSubtitleVisible: (visible) => set({ subtitleVisible: visible }),
-  showSubtitle: () => set({ subtitleVisible: true }),
+  setSubtitleVisible: (visible) => set({ subtitleVisible: visible, userHiddenSubtitle: !visible }),
+  showSubtitle: () => set({ subtitleVisible: true, userHiddenSubtitle: false }),
   hideSubtitle: () => {
     if (isTauri()) {
       subtitleWindow.emitHide();
     }
-    set({ subtitleVisible: false });
+    set({ subtitleVisible: false, userHiddenSubtitle: true });
   },
 
   addToHistory: (message) =>
@@ -164,8 +167,9 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
     switch (event.type) {
       case 'stream_start':
-        // 新消息开始时：归档当前内容到历史，清空当前内容，自动显示字幕
-        if (isTauri()) {
+        // 新消息开始时：归档当前内容到历史，清空当前内容
+        // 只有在用户没有手动隐藏字幕时才自动显示
+        if (isTauri() && !state.userHiddenSubtitle) {
           subtitleWindow.show();
         }
         if (state.currentContent && state.currentContent.length > 10) {
@@ -182,16 +186,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             currentSpeaker: event.data.speaker ?? null,
             currentEmotion: event.data.emotion ?? null,
             isStreaming: true,
-            subtitleVisible: true,
+            subtitleVisible: !s.userHiddenSubtitle,
           }));
         } else {
-          set({
+          set((s) => ({
             currentContent: '',
             currentSpeaker: event.data.speaker ?? null,
             currentEmotion: event.data.emotion ?? null,
             isStreaming: true,
-            subtitleVisible: true,
-          });
+            subtitleVisible: !s.userHiddenSubtitle,
+          }));
         }
         break;
 

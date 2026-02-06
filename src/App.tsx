@@ -9,6 +9,7 @@ import { lazy, Suspense, useEffect } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AppLayout from "@/components/AppLayout";
 import FloatingSubtitle from "@/components/FloatingSubtitle";
+import { Toaster } from "@/components/ui/sonner";
 import { useConfigStore } from "@/stores/configStore";
 
 // 懒加载页面组件
@@ -83,6 +84,7 @@ const App = () => (
           </Route>
         </Routes>
         <FloatingSubtitle />
+        <Toaster position="top-center" richColors />
       </HashRouter>
     </QueryClientProvider>
   </ErrorBoundary>

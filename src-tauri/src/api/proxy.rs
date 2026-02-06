@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, error};
+use futures::StreamExt;
 
 use crate::server::AppState;
 use crate::api::config::ApiResponse;
@@ -203,13 +204,22 @@ fn default_test_prompt() -> String {
     "你好".to_string()
 }
 
+/// 流式测试结果（包含完整响应）
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamTestResult {
+    pub success: bool,
+    pub message: String,
+    pub response: String,
+    pub latency_ms: Option<u64>,
+}
+
 /// 流式测试
 /// 
 /// POST /api/proxy/test-stream
 pub async fn test_stream(
     State(state): State<AppState>,
     Json(request): Json<StreamTestRequest>,
-) -> Json<ApiResponse<TestResult>> {
+) -> Json<ApiResponse<StreamTestResult>> {
     info!("测试流式连接...");
     broadcast_log(&state.broadcaster, "INFO", "正在测试流式连接...");
     
@@ -217,9 +227,10 @@ pub async fn test_stream(
     
     if config.api_url.is_empty() {
         broadcast_log(&state.broadcaster, "WARN", "API URL 未配置");
-        return Json(ApiResponse::success(TestResult {
+        return Json(ApiResponse::success(StreamTestResult {
             success: false,
             message: "API URL 未配置".to_string(),
+            response: String::new(),
             latency_ms: None,
         }));
     }
@@ -242,24 +253,52 @@ pub async fn test_stream(
     
     let start = std::time::Instant::now();
     
-    match client.chat(chat_request, None).await {
+    match client.chat(chat_request, None, Some(&config.model_name)).await {
         Ok(result) => {
-            let latency = start.elapsed().as_millis() as u64;
-            
             if result.response.status().is_success() {
-                info!("流式测试成功, 首字节延迟: {}ms", latency);
-                broadcast_log(&state.broadcaster, "SUCCESS", &format!("流式连接测试成功, 首字节延迟: {}ms", latency));
-                Json(ApiResponse::success(TestResult {
+                let mut full_response = String::new();
+                let mut bytes = result.response.bytes_stream();
+                
+                while let Some(chunk_result) = bytes.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            let text = String::from_utf8_lossy(&chunk);
+                            for line in text.lines() {
+                                if line.starts_with("data: ") {
+                                    let json_str = line.trim_start_matches("data: ").trim();
+                                    if json_str == "[DONE]" {
+                                        continue;
+                                    }
+                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                        let content = crate::services::llm_client::extract_response_content(&data);
+                                        full_response.push_str(&content);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("读取流式响应失败: {}", e);
+                            break;
+                        }
+                    }
+                }
+                
+                let latency = start.elapsed().as_millis() as u64;
+                info!("流式测试成功, 总耗时: {}ms, 响应长度: {} 字符", latency, full_response.len());
+                broadcast_log(&state.broadcaster, "SUCCESS", &format!("流式连接测试成功, 总耗时: {}ms", latency));
+                Json(ApiResponse::success(StreamTestResult {
                     success: true,
-                    message: format!("流式连接成功, 首字节延迟: {}ms", latency),
+                    message: format!("流式连接成功, 总耗时: {}ms", latency),
+                    response: full_response,
                     latency_ms: Some(latency),
                 }))
             } else {
                 let err_msg = format!("HTTP 错误: {}", result.response.status());
                 broadcast_log(&state.broadcaster, "ERROR", &err_msg);
-                Json(ApiResponse::success(TestResult {
+                Json(ApiResponse::success(StreamTestResult {
                     success: false,
                     message: err_msg,
+                    response: String::new(),
                     latency_ms: None,
                 }))
             }
@@ -267,9 +306,10 @@ pub async fn test_stream(
         Err(e) => {
             error!("流式测试失败: {}", e);
             broadcast_log(&state.broadcaster, "ERROR", &format!("流式测试失败: {}", e));
-            Json(ApiResponse::success(TestResult {
+            Json(ApiResponse::success(StreamTestResult {
                 success: false,
                 message: e,
+                response: String::new(),
                 latency_ms: None,
             }))
         }

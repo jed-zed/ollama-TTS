@@ -20,6 +20,14 @@ pub struct Config {
     pub model_name: String,
     /// 系统提示词注入内容
     pub system_prompt_injection: String,
+    /// 当前 API 预设
+    pub current_api_preset: String,
+    /// 自定义预设保存的 API URL
+    pub custom_api_url: String,
+    /// 自定义预设保存的 API Key
+    pub custom_api_key: String,
+    /// 自定义预设保存的模型名称
+    pub custom_model_name: String,
     
     // ==================== TTS 配置 ====================
     /// 是否启用 TTS
@@ -58,6 +66,12 @@ pub struct Config {
     pub gsv_current_character: String,
     /// GSV 角色配置映射
     pub gsv_characters: HashMap<String, GsvCharacterConfig>,
+    /// 最少参考音频数量（默认 2）
+    pub gsv_min_ref_audios: i32,
+    /// 最多参考音频数量（默认 3，设置太多可能导致速度变慢）
+    pub gsv_max_ref_audios: i32,
+    /// 情感占比阈值（低于此值的情感将被忽略，默认 0.3 即 30%）
+    pub gsv_emotion_threshold: f32,
     
     // ==================== 语音识别配置 ====================
     /// 语音引擎: "auto" | "baidu" | "xunfei" | "vosk"
@@ -121,6 +135,10 @@ impl Default for Config {
             api_key: String::new(),
             model_name: String::new(),
             system_prompt_injection: DEFAULT_SYSTEM_PROMPT_INJECTION.to_string(),
+            current_api_preset: "custom".to_string(),
+            custom_api_url: String::new(),
+            custom_api_key: String::new(),
+            custom_model_name: String::new(),
             
             // TTS 配置
             tts_enabled: true,
@@ -128,7 +146,7 @@ impl Default for Config {
             tts_auto_play: true,
             tts_save_audio: true,
             tts_output_dir: "audio_output".to_string(),
-            tts_default_character: "yuno".to_string(),
+            tts_default_character: String::new(),
             tts_volume: 0.8,
             tts_play_mode: "dialogue".to_string(),
             
@@ -140,8 +158,11 @@ impl Default for Config {
             gsv_default_female_character: String::new(),
             gsv_use_server_path: false,
             gsv_server_path_prefix: String::new(),
-            gsv_current_character: "yuno".to_string(),
+            gsv_current_character: String::new(),
             gsv_characters: HashMap::new(),
+            gsv_min_ref_audios: 2,
+            gsv_max_ref_audios: 3,
+            gsv_emotion_threshold: 0.3,
             
             // 语音识别配置
             voice_engine: "auto".to_string(),
@@ -201,7 +222,8 @@ pub struct GsvCharacterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HistoryCompressionConfig {
-    /// 是否启用自动压缩
+    /// 是否启用自动压缩（前端兼容字段）
+    #[serde(alias = "auto_compress")]
     pub enabled: bool,
     /// 存档数据路径
     pub save_data_path: String,
@@ -209,6 +231,8 @@ pub struct HistoryCompressionConfig {
     pub max_messages: i32,
     /// 每次压缩的消息数
     pub compress_count: i32,
+    /// 自动检查间隔（分钟）
+    pub check_interval: i32,
     /// 压缩前是否备份
     pub backup_before_compress: bool,
     /// 备份目录
@@ -224,6 +248,7 @@ impl Default for HistoryCompressionConfig {
             save_data_path: String::new(),
             max_messages: 100,
             compress_count: 50,
+            check_interval: 30,
             backup_before_compress: true,
             backup_dir: "backups".to_string(),
             custom_prompt: String::new(),

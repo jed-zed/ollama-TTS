@@ -15,19 +15,26 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, error, warn, debug};
 
 use crate::services::config_store::ConfigStore;
 use crate::services::sse_broadcaster::{SseBroadcaster, LogEvent};
 use crate::services::llm_client::{ChatMessage, ChatRequest, GenerateRequest, LlmClient, extract_response_content, detect_fake_stream};
-use crate::services::stream_parser::{StreamingResponseParser, extract_response_only};
+use crate::services::stream_parser::extract_response_only;
+use crate::services::tts_parser::StreamingTTSParser;
+use crate::services::tts_gsv::GPTSoVITSEngine;
+use crate::services::audio_player::TTSManager;
+use crate::models::tts_types::TtsRequest;
 
 /// 代理服务器专用状态（不包含 proxy_manager 避免循环依赖）
 #[derive(Clone)]
 pub struct ProxyAppState {
     pub config_store: Arc<ConfigStore>,
     pub broadcaster: Arc<SseBroadcaster>,
+    pub gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
+    pub tts_manager: Option<Arc<Mutex<TTSManager>>>,
 }
 
 /// 模型信息
@@ -111,17 +118,17 @@ async fn chat(
     State(state): State<ProxyAppState>,
     Json(request): Json<OllamaChatRequest>,
 ) -> Response<Body> {
-    let (real_model, is_fake_stream) = detect_fake_stream(&request.model);
+    let config = state.config_store.get();
+    let base_model = &config.model_name;
+    let (real_model, is_fake_stream) = detect_fake_stream(&request.model, base_model);
     let should_stream = request.stream || is_fake_stream;
     
     let msg = format!(
-        "收到 chat 请求: 原始model={}, 实际model={}, 原始stream={}, 实际stream={}, 假流式={}",
-        request.model, real_model, request.stream, should_stream, is_fake_stream
+        "收到 chat 请求: 原始model={}, 实际model={}, 原始stream={}, 实际stream={}, 假流式={}, 配置原模型={}",
+        request.model, real_model, request.stream, should_stream, is_fake_stream, base_model
     );
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
-    
-    let config = state.config_store.get();
     
     if config.api_url.is_empty() {
         let err_msg = "API URL 未配置";
@@ -146,7 +153,9 @@ async fn chat(
     };
     
     let broadcaster = state.broadcaster.clone();
-    match client.chat(chat_request, injection).await {
+    let gsv_engine = state.gsv_engine.clone();
+    let tts_manager = state.tts_manager.clone();
+    match client.chat(chat_request, injection, Some(base_model)).await {
         Ok(result) => {
             let success_msg = format!("请求成功: HTTP {}", result.response.status());
             info!("{}", success_msg);
@@ -154,11 +163,11 @@ async fn chat(
             
             if result.is_fake_stream {
                 broadcast_log(&broadcaster, "INFO", "使用假流式模式：内部流式接收，返回完整响应");
-                process_fake_stream_response(result.response, request.model, true, broadcaster).await
+                process_fake_stream_response(result.response, request.model, true, broadcaster, gsv_engine, tts_manager).await
             } else if result.is_streaming {
-                process_stream_response(result.response, request.model, true, broadcaster).await
+                process_stream_response(result.response, request.model, true, broadcaster, gsv_engine, tts_manager).await
             } else {
-                process_non_stream_response(result.response, request.model, true, broadcaster).await
+                process_non_stream_response(result.response, request.model, true, broadcaster, gsv_engine, tts_manager).await
             }
         }
         Err(e) => {
@@ -177,17 +186,17 @@ async fn generate(
     State(state): State<ProxyAppState>,
     Json(request): Json<OllamaGenerateRequest>,
 ) -> Response<Body> {
-    let (real_model, is_fake_stream) = detect_fake_stream(&request.model);
+    let config = state.config_store.get();
+    let base_model = &config.model_name;
+    let (real_model, is_fake_stream) = detect_fake_stream(&request.model, base_model);
     let should_stream = request.stream || is_fake_stream;
     
     let msg = format!(
-        "收到 generate 请求: 原始model={}, 实际model={}, 原始stream={}, 实际stream={}, 假流式={}",
-        request.model, real_model, request.stream, should_stream, is_fake_stream
+        "收到 generate 请求: 原始model={}, 实际model={}, 原始stream={}, 实际stream={}, 假流式={}, 配置原模型={}",
+        request.model, real_model, request.stream, should_stream, is_fake_stream, base_model
     );
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
-    
-    let config = state.config_store.get();
     
     if config.api_url.is_empty() {
         let err_msg = "API URL 未配置";
@@ -212,7 +221,9 @@ async fn generate(
     };
     
     let broadcaster = state.broadcaster.clone();
-    match client.generate(generate_request, injection).await {
+    let gsv_engine = state.gsv_engine.clone();
+    let tts_manager = state.tts_manager.clone();
+    match client.generate(generate_request, injection, Some(base_model)).await {
         Ok(result) => {
             let success_msg = format!("请求成功: HTTP {}", result.response.status());
             info!("{}", success_msg);
@@ -220,11 +231,11 @@ async fn generate(
             
             if result.is_fake_stream {
                 broadcast_log(&broadcaster, "INFO", "使用假流式模式：内部流式接收，返回完整响应");
-                process_fake_stream_response(result.response, request.model, false, broadcaster).await
+                process_fake_stream_response(result.response, request.model, false, broadcaster, gsv_engine, tts_manager).await
             } else if result.is_streaming {
-                process_stream_response(result.response, request.model, false, broadcaster).await
+                process_stream_response(result.response, request.model, false, broadcaster, gsv_engine, tts_manager).await
             } else {
-                process_non_stream_response(result.response, request.model, false, broadcaster).await
+                process_non_stream_response(result.response, request.model, false, broadcaster, gsv_engine, tts_manager).await
             }
         }
         Err(e) => {
@@ -242,12 +253,18 @@ async fn process_stream_response(
     model_name: String,
     is_chat: bool,
     broadcaster: Arc<SseBroadcaster>,
+    gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
+    tts_manager: Option<Arc<Mutex<TTSManager>>>,
 ) -> Response<Body> {
     let msg = "开始处理流式响应（真流式：实时显示字幕）...";
     info!("{}", msg);
     broadcast_log(&broadcaster, "INFO", msg);
     
-    broadcaster.start_stream();
+    let tts_enabled = gsv_engine.is_some() && tts_manager.is_some();
+    if tts_enabled {
+        info!("TTS 已启用，将在检测到对话时触发语音合成");
+        broadcast_log(&broadcaster, "INFO", "TTS 已启用");
+    }
     
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(100);
     
@@ -256,7 +273,72 @@ async fn process_stream_response(
     tokio::spawn(async move {
         let mut total_content = String::new();
         let mut chunk_count = 0;
-        let mut parser = StreamingResponseParser::new();
+        let mut tts_parser = StreamingTTSParser::new();
+        let mut stream_started = false;
+        
+        if tts_enabled {
+            let gsv_engine_clone = gsv_engine.clone().unwrap();
+            let tts_manager_clone = tts_manager.clone().unwrap();
+            let broadcaster_for_tts = broadcaster_clone.clone();
+            
+            tts_parser.set_callback(Box::new(move |segment| {
+                let text = segment.text.clone();
+                let speaker = segment.speaker.clone();
+                let emotion = segment.emotion.clone();
+                let emotion_desc = segment.emotion_description.clone();
+                let speed = segment.speed;
+                let gender = segment.gender.clone();
+                let emotion_vector = segment.emotion_vector.clone();
+                let is_nsfw = segment.is_nsfw;
+                
+                info!("TTS 触发: [{}] {}...", speaker, text.chars().take(30).collect::<String>());
+                
+                let gsv = gsv_engine_clone.clone();
+                let mgr = tts_manager_clone.clone();
+                let bc = broadcaster_for_tts.clone();
+                
+                tauri::async_runtime::spawn(async move {
+                    let tts_request = TtsRequest {
+                        text: text.clone(),
+                        speaker,
+                        gender,
+                        emotion,
+                        emotion_description: emotion_desc,
+                        speed,
+                        emotion_vector,
+                        is_nsfw,
+                    };
+                    
+                    let audio_result = {
+                        let mut engine = gsv.lock().await;
+                        engine.synthesize(tts_request).await
+                    };
+                    
+                    if audio_result.success {
+                        let mut manager = mgr.lock().await;
+                        
+                        if let Some(segments) = audio_result.audio_segments {
+                            let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
+                            info!("TTS 合成成功: {} 段, 共 {} 字节", segments.len(), total_bytes);
+                            broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
+                            
+                            for (i, segment_data) in segments.into_iter().enumerate() {
+                                info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
+                                manager.play_audio(segment_data);
+                            }
+                        } else if let Some(audio_data) = audio_result.audio_data {
+                            info!("TTS 合成成功: {} 字节", audio_data.len());
+                            broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
+                            manager.play_audio(audio_data);
+                        }
+                    } else {
+                        let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
+                        error!("TTS 合成失败: {}", err_msg);
+                        broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));
+                    }
+                });
+            }));
+        }
         
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
@@ -294,8 +376,13 @@ async fn process_stream_response(
                                 total_content.push_str(&raw_content);
                                 chunk_count += 1;
                                 
-                                let filtered = parser.feed(&raw_content);
+                                let filtered = tts_parser.feed(&raw_content);
                                 if !filtered.is_empty() {
+                                    if !stream_started {
+                                        broadcaster_clone.start_stream();
+                                        stream_started = true;
+                                        debug!("检测到 response 字段，开始字幕流");
+                                    }
                                     debug!("字幕内容: {} 字符", filtered.len());
                                     broadcaster_clone.add_chunk(&filtered);
                                 }
@@ -334,7 +421,9 @@ async fn process_stream_response(
             }
         }
         
-        broadcaster_clone.end_stream();
+        if stream_started {
+            broadcaster_clone.end_stream();
+        }
         
         let final_response = if is_chat {
             json!({
@@ -382,16 +471,86 @@ async fn process_fake_stream_response(
     model_name: String,
     is_chat: bool,
     broadcaster: Arc<SseBroadcaster>,
+    gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
+    tts_manager: Option<Arc<Mutex<TTSManager>>>,
 ) -> Response<Body> {
     let msg = "开始处理假流式响应（内部流式接收，实时显示字幕，返回完整响应）...";
     info!("{}", msg);
     broadcast_log(&broadcaster, "INFO", msg);
     
-    broadcaster.start_stream();
+    let tts_enabled = gsv_engine.is_some() && tts_manager.is_some();
+    if tts_enabled {
+        info!("TTS 已启用（假流式模式）");
+    }
     
     let mut total_content = String::new();
     let mut chunk_count = 0;
-    let mut parser = StreamingResponseParser::new();
+    let mut tts_parser = StreamingTTSParser::new();
+    let mut stream_started = false;
+    
+    if tts_enabled {
+        let gsv_engine_clone = gsv_engine.clone().unwrap();
+        let tts_manager_clone = tts_manager.clone().unwrap();
+        let broadcaster_for_tts = broadcaster.clone();
+        
+        tts_parser.set_callback(Box::new(move |segment| {
+            let text = segment.text.clone();
+            let speaker = segment.speaker.clone();
+            let emotion = segment.emotion.clone();
+            let emotion_desc = segment.emotion_description.clone();
+            let speed = segment.speed;
+            let gender = segment.gender.clone();
+            let emotion_vector = segment.emotion_vector.clone();
+            let is_nsfw = segment.is_nsfw;
+            
+            info!("TTS 触发（假流式）: [{}] {}...", speaker, text.chars().take(30).collect::<String>());
+            
+            let gsv = gsv_engine_clone.clone();
+            let mgr = tts_manager_clone.clone();
+            let bc = broadcaster_for_tts.clone();
+            
+            tauri::async_runtime::spawn(async move {
+                let tts_request = TtsRequest {
+                    text: text.clone(),
+                    speaker,
+                    gender,
+                    emotion,
+                    emotion_description: emotion_desc,
+                    speed,
+                    emotion_vector,
+                    is_nsfw,
+                };
+                
+                let audio_result = {
+                    let mut engine = gsv.lock().await;
+                    engine.synthesize(tts_request).await
+                };
+                
+                if audio_result.success {
+                    let mut manager = mgr.lock().await;
+                    
+                    if let Some(segments) = audio_result.audio_segments {
+                        let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
+                        info!("TTS 合成成功（假流式）: {} 段, 共 {} 字节", segments.len(), total_bytes);
+                        broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
+                        
+                        for (i, segment_data) in segments.into_iter().enumerate() {
+                            info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
+                            manager.play_audio(segment_data);
+                        }
+                    } else if let Some(audio_data) = audio_result.audio_data {
+                        info!("TTS 合成成功: {} 字节", audio_data.len());
+                        broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
+                        manager.play_audio(audio_data);
+                    }
+                } else {
+                    let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
+                    error!("TTS 合成失败: {}", err_msg);
+                    broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));
+                }
+            });
+        }));
+    }
     
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -426,8 +585,13 @@ async fn process_fake_stream_response(
                             total_content.push_str(&raw_content);
                             chunk_count += 1;
                             
-                            let filtered = parser.feed(&raw_content);
+                            let filtered = tts_parser.feed(&raw_content);
                             if !filtered.is_empty() {
+                                if !stream_started {
+                                    broadcaster.start_stream();
+                                    stream_started = true;
+                                    debug!("假流式：检测到 response 字段，开始字幕流");
+                                }
                                 debug!("假流式字幕内容: {} 字符", filtered.len());
                                 broadcaster.add_chunk(&filtered);
                             }
@@ -439,13 +603,17 @@ async fn process_fake_stream_response(
                 let err_msg = format!("读取流错误: {}", e);
                 error!("{}", err_msg);
                 broadcast_log(&broadcaster, "ERROR", &err_msg);
-                broadcaster.end_stream();
+                if stream_started {
+                    broadcaster.end_stream();
+                }
                 return error_response(&err_msg);
             }
         }
     }
     
-    broadcaster.end_stream();
+    if stream_started {
+        broadcaster.end_stream();
+    }
     
     let stats_msg = format!("假流式响应完成: {} 个数据块, {} 字符", chunk_count, total_content.len());
     info!("{}", stats_msg);
@@ -481,10 +649,14 @@ async fn process_non_stream_response(
     model_name: String,
     is_chat: bool,
     broadcaster: Arc<SseBroadcaster>,
+    gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
+    tts_manager: Option<Arc<Mutex<TTSManager>>>,
 ) -> Response<Body> {
     let msg = "处理非流式响应（假流式：收到完整响应后显示字幕）...";
     info!("{}", msg);
     broadcast_log(&broadcaster, "INFO", msg);
+    
+    let tts_enabled = gsv_engine.is_some() && tts_manager.is_some();
     
     match response.json::<Value>().await {
         Ok(data) => {
@@ -500,6 +672,77 @@ async fn process_non_stream_response(
                 broadcaster.start_stream();
                 broadcaster.add_chunk(&filtered_content);
                 broadcaster.end_stream();
+            }
+            
+            if tts_enabled {
+                let gsv = gsv_engine.clone().unwrap();
+                let mgr = tts_manager.clone().unwrap();
+                let bc = broadcaster.clone();
+                
+                let mut tts_parser = StreamingTTSParser::new();
+                let gsv_for_cb = gsv.clone();
+                let mgr_for_cb = mgr.clone();
+                let bc_for_cb = bc.clone();
+                
+                tts_parser.set_callback(Box::new(move |segment| {
+                    let text = segment.text.clone();
+                    let speaker = segment.speaker.clone();
+                    let emotion = segment.emotion.clone();
+                    let emotion_desc = segment.emotion_description.clone();
+                    let speed = segment.speed;
+                    let gender = segment.gender.clone();
+                    let emotion_vector = segment.emotion_vector.clone();
+                    let is_nsfw = segment.is_nsfw;
+                    
+                    info!("TTS 触发（非流式）: [{}] {}...", speaker, text.chars().take(30).collect::<String>());
+                    
+                    let gsv = gsv_for_cb.clone();
+                    let mgr = mgr_for_cb.clone();
+                    let bc = bc_for_cb.clone();
+                    
+                    tauri::async_runtime::spawn(async move {
+                        let tts_request = TtsRequest {
+                            text: text.clone(),
+                            speaker,
+                            gender,
+                            emotion,
+                            emotion_description: emotion_desc,
+                            speed,
+                            emotion_vector,
+                            is_nsfw,
+                        };
+                        
+                        let audio_result = {
+                            let mut engine = gsv.lock().await;
+                            engine.synthesize(tts_request).await
+                        };
+                        
+                        if audio_result.success {
+                            let mut manager = mgr.lock().await;
+                            
+                            if let Some(segments) = audio_result.audio_segments {
+                                let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
+                                info!("TTS 合成成功（非流式）: {} 段, 共 {} 字节", segments.len(), total_bytes);
+                                broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
+                                
+                                for (i, segment_data) in segments.into_iter().enumerate() {
+                                    info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
+                                    manager.play_audio(segment_data);
+                                }
+                            } else if let Some(audio_data) = audio_result.audio_data {
+                                info!("TTS 合成成功: {} 字节", audio_data.len());
+                                broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
+                                manager.play_audio(audio_data);
+                            }
+                        } else {
+                            let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
+                            error!("TTS 合成失败: {}", err_msg);
+                            broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));
+                        }
+                    });
+                }));
+                
+                tts_parser.feed(&raw_content);
             }
             
             let result = if is_chat {

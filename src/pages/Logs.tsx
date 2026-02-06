@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal, Download, Trash2, PauseCircle, PlayCircle, RefreshCw, Radio, Search, Filter, TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -27,6 +27,15 @@ const Logs = () => {
   } = useLogStore();
 
   const logsContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtTop, setIsAtTop] = useState(true);
+
+  // 检测用户是否在顶部（日志是倒序显示，最新的在顶部）
+  const handleScroll = useCallback(() => {
+    if (logsContainerRef.current) {
+      // 如果 scrollTop 接近 0，认为用户在顶部
+      setIsAtTop(logsContainerRef.current.scrollTop < 50);
+    }
+  }, []);
 
   useEffect(() => {
     fetchLogs();
@@ -38,11 +47,12 @@ const Logs = () => {
     };
   }, []);
 
+  // 只有当用户在顶部且未暂停时才自动滚动到最新
   useEffect(() => {
-    if (!isPaused && logsContainerRef.current) {
+    if (!isPaused && isAtTop && logsContainerRef.current) {
       logsContainerRef.current.scrollTop = 0;
     }
-  }, [logs, isPaused]);
+  }, [logs, isPaused, isAtTop]);
 
   const getLevelColor = (level: LogLevel) => {
     switch (level) {
@@ -197,7 +207,7 @@ const Logs = () => {
             )}
           </div>
         </CardHeader>
-        <CardContent ref={logsContainerRef} className="flex-1 overflow-auto p-0 font-mono text-sm">
+        <CardContent ref={logsContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto p-0 font-mono text-sm">
           <div className="p-4 space-y-1">
             {logs.length === 0 && !isLoading && (
               <div className="text-center text-muted-foreground py-8">

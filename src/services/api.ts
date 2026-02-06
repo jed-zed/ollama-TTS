@@ -92,14 +92,22 @@ class ApiClient {
       // 需要正确解析嵌套结构
       if (typeof json === 'object' && json !== null && 'success' in json) {
         if (json.success && 'data' in json) {
+          // 标准 ApiResponse 格式：{success: true, data: {...}}
           return {
             success: true,
             data: json.data as T,
           };
+        } else if (json.success) {
+          // 直接返回的响应格式：{success: true, available: true, ...}
+          // 将整个对象作为 data 返回
+          return {
+            success: true,
+            data: json as T,
+          };
         } else {
           return {
             success: false,
-            error: json.error || '请求失败',
+            error: json.error || json.message || '请求失败',
           };
         }
       }
@@ -442,10 +450,8 @@ export async function testProxyStream(callbacks: TestStreamCallbacks): Promise<v
     });
 
     if (!response.ok) {
-      // 尝试解析错误响应
       try {
         const json = await response.json();
-        // 后端返回 ApiResponse 格式
         if (json.data && json.data.message) {
           callbacks.onError(json.data.message);
         } else {
@@ -457,15 +463,14 @@ export async function testProxyStream(callbacks: TestStreamCallbacks): Promise<v
       return;
     }
 
-    // 后端返回的是普通 JSON 响应，不是流式响应
     const json = await response.json();
     if (json.success && json.data) {
       if (json.data.success) {
-        callbacks.onChunk(json.data.message);
+        callbacks.onChunk(json.data.response || json.data.message);
         callbacks.onComplete({
           first_token_ms: json.data.latency_ms || 0,
           total_ms: json.data.latency_ms || 0,
-          token_count: 1,
+          token_count: (json.data.response || '').length,
         });
       } else {
         callbacks.onError(json.data.message);
