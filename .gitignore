@@ -80,3 +80,6 @@ test_overlay_*
 # Temp files
 kDownloadaireactsrc-tauri
 rc-tauri*
+
+# Legacy code
+test/
