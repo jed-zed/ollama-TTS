@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { useConfigStore } from '@/stores/configStore';
 import { useStreamStore } from '@/stores/streamStore';
 import { streamManager } from '@/services/stream';
+import { subtitleWindow, isTauri } from '@/services/tauri';
 
 const AppLayout = () => {
   const location = useLocation();
@@ -13,15 +14,32 @@ const AppLayout = () => {
   const config = useConfigStore((state) => state.config);
   const setConnectionStatus = useStreamStore((state) => state.setConnectionStatus);
   const handleStreamEvent = useStreamStore((state) => state.handleStreamEvent);
+  const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
 
-  // 初始化：加载配置和建立 SSE 连接
   useEffect(() => {
-    // 加载配置
+    if (!isTauri()) return;
+    
+    let unsubscribe: (() => void) | null = null;
+    
+    subtitleWindow.onUserHide(() => {
+      console.log('[AppLayout] Received subtitle-user-hide event');
+      hideSubtitle();
+    }).then((unsub) => {
+      unsubscribe = unsub;
+    });
+    
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [hideSubtitle]);
+
+  useEffect(() => {
     if (!config) {
       loadConfig();
     }
 
-    // 建立 SSE 连接
     streamManager.onStatusChange = (status) => {
       setConnectionStatus(status);
     };

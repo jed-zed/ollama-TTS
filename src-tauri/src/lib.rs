@@ -49,9 +49,10 @@ async fn stop_backend(app: tauri::AppHandle) -> Result<(), String> {
 async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = "subtitle";
     
-    // 如果窗口已存在，直接显示（不获取焦点，避免游戏暂停）
+    // 如果窗口已存在，直接显示
     if let Some(window) = app.get_webview_window(label) {
         window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
 
@@ -69,6 +70,7 @@ async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     .always_on_top(true)
     .resizable(true)
     .skip_taskbar(true)
+    .accept_first_mouse(true)
     .build()
     .map_err(|e| format!("Failed to create subtitle window: {}", e))?;
 
@@ -91,6 +93,7 @@ async fn close_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
 async fn show_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("subtitle") {
         window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
     } else {
         create_subtitle_window(app).await?;
     }

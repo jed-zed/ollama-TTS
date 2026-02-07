@@ -18,6 +18,13 @@ export interface LogFilter {
   search?: string;
 }
 
+export interface LogPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface LogStats {
   total: number;
   by_level: Record<LogLevel, number>;
@@ -28,17 +35,20 @@ interface LogState {
   logs: LogEntry[];
   stats: LogStats | null;
   filter: LogFilter;
+  pagination: LogPagination;
   isLoading: boolean;
   isStreaming: boolean;
   isPaused: boolean;
   error: string | null;
   abortController: AbortController | null;
 
-  fetchLogs: () => Promise<void>;
+  fetchLogs: (page?: number) => Promise<void>;
   fetchStats: () => Promise<void>;
   clearLogs: () => Promise<void>;
   exportLogs: (format: 'json' | 'csv' | 'text') => Promise<void>;
   setFilter: (filter: Partial<LogFilter>) => void;
+  setPage: (page: number) => void;
+  setPageSize: (size: number) => void;
   startStreaming: () => void;
   stopStreaming: () => void;
   togglePause: () => void;
@@ -50,31 +60,56 @@ export const useLogStore = create<LogState>((set, get) => ({
   logs: [],
   stats: null,
   filter: {},
+  pagination: {
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 0,
+  },
   isLoading: false,
   isStreaming: false,
   isPaused: false,
   error: null,
   abortController: null,
 
-  fetchLogs: async () => {
+  fetchLogs: async (page?: number) => {
     set({ isLoading: true, error: null });
     try {
-      const { filter } = get();
+      const { filter, pagination } = get();
+      const targetPage = page ?? pagination.page;
       const params = new URLSearchParams();
       if (filter.level) params.set('level', filter.level);
       if (filter.module) params.set('module', filter.module);
       if (filter.search) params.set('search', filter.search);
-      params.set('limit', '200');
+      params.set('limit', String(pagination.pageSize));
+      params.set('page', String(targetPage));
 
       const queryString = params.toString();
       const endpoint = `/api/logs${queryString ? `?${queryString}` : ''}`;
       
-      const response = await apiClient.get<LogEntry[]>(endpoint);
+      const baseUrl = apiClient.getBaseUrl();
+      const fetchResponse = await fetch(`${baseUrl}${endpoint}`);
       
-      if (response.success && response.data) {
-        set({ logs: response.data, isLoading: false });
+      if (!fetchResponse.ok) {
+        set({ logs: [], error: `HTTP ${fetchResponse.status}`, isLoading: false });
+        return;
+      }
+      
+      const apiData = await fetchResponse.json();
+      
+      if (apiData.success && Array.isArray(apiData.data)) {
+        set({ 
+          logs: apiData.data, 
+          pagination: {
+            page: apiData.page ?? targetPage,
+            pageSize: apiData.page_size ?? pagination.pageSize,
+            total: apiData.total ?? 0,
+            totalPages: apiData.total_pages ?? 0,
+          },
+          isLoading: false 
+        });
       } else {
-        set({ logs: [], error: response.error || '获取日志失败', isLoading: false });
+        set({ logs: [], error: apiData.error || '获取日志失败', isLoading: false });
       }
     } catch (error) {
       set({ logs: [], error: error instanceof Error ? error.message : '获取日志失败', isLoading: false });
@@ -128,8 +163,17 @@ export const useLogStore = create<LogState>((set, get) => ({
   },
 
   setFilter: (filter: Partial<LogFilter>) => {
-    set((state) => ({ filter: { ...state.filter, ...filter } }));
-    get().fetchLogs();
+    set((state) => ({ filter: { ...state.filter, ...filter }, pagination: { ...state.pagination, page: 1 } }));
+    get().fetchLogs(1);
+  },
+
+  setPage: (page: number) => {
+    get().fetchLogs(page);
+  },
+
+  setPageSize: (size: number) => {
+    set((state) => ({ pagination: { ...state.pagination, pageSize: size, page: 1 } }));
+    get().fetchLogs(1);
   },
 
   startStreaming: () => {

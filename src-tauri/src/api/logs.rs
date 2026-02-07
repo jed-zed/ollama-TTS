@@ -26,12 +26,16 @@ pub struct LogsQuery {
     pub search: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
-    #[serde(default)]
-    pub offset: usize,
+    #[serde(default = "default_page")]
+    pub page: usize,
 }
 
 fn default_limit() -> usize {
-    100
+    50
+}
+
+fn default_page() -> usize {
+    1
 }
 
 #[derive(Serialize)]
@@ -39,6 +43,9 @@ pub struct LogsResponse {
     pub success: bool,
     pub data: Vec<LogEvent>,
     pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_pages: usize,
 }
 
 #[derive(Serialize)]
@@ -69,22 +76,36 @@ pub async fn get_logs(
     State(state): State<AppState>,
     Query(query): Query<LogsQuery>,
 ) -> Json<LogsResponse> {
-    info!("获取日志列表: level={:?}, module={:?}, search={:?}", query.level, query.module, query.search);
+    info!("获取日志列表: level={:?}, module={:?}, search={:?}, page={}, limit={}", 
+          query.level, query.module, query.search, query.page, query.limit);
+    
+    let page = query.page.max(1);
+    let page_size = query.limit.min(200);
+    let offset = (page - 1) * page_size;
+    
+    let total = state.broadcaster.get_filtered_log_count(
+        query.level.as_deref(),
+        query.module.as_deref(),
+        query.search.as_deref(),
+    );
     
     let logs = state.broadcaster.get_logs(
         query.level.as_deref(),
         query.module.as_deref(),
         query.search.as_deref(),
-        query.limit,
-        query.offset,
+        page_size,
+        offset,
     );
     
-    let total = state.broadcaster.get_log_count();
+    let total_pages = (total + page_size - 1) / page_size.max(1);
     
     Json(LogsResponse {
         success: true,
         data: logs,
         total,
+        page,
+        page_size,
+        total_pages,
     })
 }
 

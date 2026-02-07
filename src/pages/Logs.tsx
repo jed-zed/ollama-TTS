@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Terminal, Download, Trash2, PauseCircle, PlayCircle, RefreshCw, Radio, Search, Filter, TestTube } from 'lucide-react';
+import { Terminal, Download, Trash2, PauseCircle, PlayCircle, RefreshCw, Radio, Search, Filter, TestTube, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ const Logs = () => {
     logs,
     stats,
     filter,
+    pagination,
     isLoading,
     isStreaming,
     isPaused,
@@ -20,6 +21,8 @@ const Logs = () => {
     clearLogs,
     exportLogs,
     setFilter,
+    setPage,
+    setPageSize,
     startStreaming,
     stopStreaming,
     togglePause,
@@ -181,7 +184,7 @@ const Logs = () => {
 
         {stats && (
           <div className="flex gap-4 text-sm text-muted-foreground ml-auto">
-            <span>总计: <strong>{stats.total}</strong></span>
+            <span>总计: <strong>{pagination.total}</strong></span>
             <span className="text-red-500">错误: {stats.by_level?.ERROR || 0}</span>
             <span className="text-orange-500">警告: {stats.by_level?.WARN || 0}</span>
           </div>
@@ -245,6 +248,74 @@ const Logs = () => {
           </div>
         </CardContent>
       </Card>
+
+      {pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>每页</span>
+            <Select
+              value={String(pagination.pageSize)}
+              onValueChange={(v) => setPageSize(Number(v))}
+            >
+              <SelectTrigger className="w-[80px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+                <SelectItem value="200">200</SelectItem>
+              </SelectContent>
+            </Select>
+            <span>条</span>
+            <span className="ml-4">
+              第 {pagination.page} / {pagination.totalPages} 页
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setPage(1)}
+              disabled={pagination.page <= 1 || isLoading}
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setPage(pagination.page - 1)}
+              disabled={pagination.page <= 1 || isLoading}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="px-3 text-sm">
+              {pagination.page}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setPage(pagination.page + 1)}
+              disabled={pagination.page >= pagination.totalPages || isLoading}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setPage(pagination.totalPages)}
+              disabled={pagination.page >= pagination.totalPages || isLoading}
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

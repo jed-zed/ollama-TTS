@@ -206,6 +206,33 @@ export const subtitleWindow = {
   },
 
   /**
+   * 从字幕窗口发送用户隐藏事件到主窗口
+   * 用于通知主窗口更新 userHiddenSubtitle 状态
+   */
+  async emitUserHide(): Promise<void> {
+    if (!isTauri()) return;
+    await initTauriApi();
+    if (emitTo) {
+      await emitTo('main', 'subtitle-user-hide', {});
+    }
+    await this.hide();
+  },
+
+  /**
+   * 监听用户隐藏字幕事件（主窗口监听）
+   */
+  async onUserHide(handler: () => void): Promise<() => void> {
+    if (!isTauri()) return () => {};
+    await initTauriApi();
+    if (listen) {
+      return listen('subtitle-user-hide', () => {
+        handler();
+      });
+    }
+    return () => {};
+  },
+
+  /**
    * 监听隐藏字幕事件
    */
   async onHide(handler: () => void): Promise<() => void> {

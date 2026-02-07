@@ -286,12 +286,25 @@ impl StreamingTTSParser {
         // 这比手动括号匹配更可靠，因为它正确处理所有 JSON 边界情况
         let remaining = &self.buffer[brace_start..];
         
+        // 显示要解析的 JSON 片段（截取前 200 字符）
+        let preview_len = remaining.len().min(200);
+        info!("📋 准备解析 tts_config JSON (前{}字符): {}", preview_len, &remaining[..preview_len]);
+        
         // 尝试使用 serde_json 直接解析
         // serde_json::from_str 会在遇到有效 JSON 结束后停止
         let mut deserializer = serde_json::Deserializer::from_str(remaining).into_iter::<TtsConfig>();
         
         match deserializer.next() {
-            Some(Ok(config)) => {
+            Some(Ok(raw_config)) => {
+                info!("📋 tts_config 原始解析结果:");
+                info!("   raw.tts_config 嵌套: {:?}", raw_config.tts_config.is_some());
+                info!("   raw.segments: {:?}", raw_config.segments.as_ref().map(|s| s.len()));
+                
+                let config = raw_config.unwrap_nested();
+                
+                info!("📋 tts_config 展开后:");
+                info!("   segments 数量: {:?}", config.segments.as_ref().map(|s| s.len()));
+                
                 self.is_nsfw = config.is_nsfw.unwrap_or(false);
                 
                 info!("📋 tts_config 解析成功:");

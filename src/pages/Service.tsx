@@ -33,6 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useTTSStore } from '@/stores/ttsStore';
+import { ModelCombobox } from '@/components/ModelCombobox';
 import { listen } from '@tauri-apps/api/event';
 import { checkBackendHealth, pollBackendHealth, type HealthCheckResponse, apiClient, getProxyStatus, startProxy, stopProxy, testProxy, testProxyStream, type TestStreamMetrics } from '@/services/api';
 
@@ -682,13 +683,16 @@ const Service = () => {
             <div className="space-y-2">
               <Label>模型名称</Label>
               <div className="flex gap-2">
-                <Input
+                <ModelCombobox
                   value={localModelName}
-                  onChange={(e) => setLocalModelName(e.target.value)}
+                  onChange={setLocalModelName}
+                  onSelect={(value) => saveApiConfigToCurrentPreset('model_name', value)}
                   onBlur={() => saveApiConfigToCurrentPreset('model_name', localModelName)}
-                  className="bg-white/50"
-                  placeholder="deepseek-ai/DeepSeek-V3"
+                  apiUrl={localApiUrl}
+                  apiKey={localApiKey}
                   disabled={proxyStatus === 'running'}
+                  placeholder="选择或输入模型名称"
+                  className="flex-1"
                 />
                 <Button
                   size="icon"

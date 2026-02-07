@@ -233,7 +233,7 @@ impl SseBroadcaster {
         {
             let mut log_state = self.log_state.write();
             log_state.logs.push(event.clone());
-            if log_state.logs.len() > 1000 {
+            if log_state.logs.len() > 10000 {
                 log_state.logs.remove(0);
             }
         }
@@ -276,6 +276,34 @@ impl SseBroadcaster {
     /// 获取日志总数
     pub fn get_log_count(&self) -> usize {
         self.log_state.read().logs.len()
+    }
+    
+    pub fn get_filtered_log_count(&self, level: Option<&str>, module: Option<&str>, search: Option<&str>) -> usize {
+        let log_state = self.log_state.read();
+        let mut count = 0;
+        
+        for log in log_state.logs.iter() {
+            if let Some(lvl) = level {
+                if log.level != lvl {
+                    continue;
+                }
+            }
+            if let Some(mod_name) = module {
+                let mod_lower = mod_name.to_lowercase();
+                if !log.module.as_ref().map_or(false, |m| m.to_lowercase().contains(&mod_lower)) {
+                    continue;
+                }
+            }
+            if let Some(s) = search {
+                let s_lower = s.to_lowercase();
+                if !log.message.to_lowercase().contains(&s_lower) {
+                    continue;
+                }
+            }
+            count += 1;
+        }
+        
+        count
     }
     
     /// 获取日志统计

@@ -8,8 +8,12 @@ use std::collections::HashMap;
 /// TTS 配置（从 AI 响应中提取）
 /// 
 /// AI 返回的 JSON 中的 tts_config 字段结构。
+/// 支持嵌套格式：`{"tts_config": {"tts_config": {...}}}` 会自动展开。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TtsConfig {
+    /// 嵌套的 tts_config（某些 AI 会返回嵌套结构）
+    #[serde(default)]
+    pub tts_config: Option<Box<TtsConfig>>,
     /// 说话者（单一 speaker 模式）
     #[serde(default)]
     pub speaker: Option<String>,
@@ -37,6 +41,16 @@ pub struct TtsConfig {
     /// TTS 段落列表（多 speaker 模式）
     #[serde(default)]
     pub segments: Option<Vec<TtsSegment>>,
+}
+
+impl TtsConfig {
+    /// 展开嵌套的 tts_config，返回最内层的配置
+    pub fn unwrap_nested(self) -> Self {
+        match self.tts_config {
+            Some(inner) => inner.unwrap_nested(),
+            None => self,
+        }
+    }
 }
 
 /// TTS 段落配置
