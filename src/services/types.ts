@@ -166,6 +166,7 @@ export interface MemoryStatus {
   character_name: string;
   player_name: string;
   message_count: number;
+  summary_count: number;
   needs_compression: boolean;
   last_compressed?: string;
   file_path: string;

@@ -17,6 +17,17 @@ use tracing::{info, warn, error, debug};
 
 use crate::models::config::{HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT, SUMMARY_MERGE_PROMPT};
 
+/// 对话历史分析结果（用于状态检测与阈值判定）
+#[derive(Debug, Clone)]
+pub struct HistoryAnalysis {
+    /// 总计数（摘要数 + 对话轮次数）
+    pub total_count: i32,
+    /// 摘要数量
+    pub summary_count: i32,
+    /// 对话轮次数（不含摘要）
+    pub round_count: i32,
+}
+
 /// 压缩状态信息（与前端 MemoryStatus 类型匹配）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionStatus {
@@ -28,8 +39,10 @@ pub struct CompressionStatus {
     pub player_name: String,
     /// 文件路径
     pub file_path: String,
-    /// 消息数量
+    /// 消息数量（摘要数 + 对话轮次数）
     pub message_count: i32,
+    /// 摘要数量
+    pub summary_count: i32,
     /// 是否需要压缩
     pub needs_compression: bool,
     /// 最后压缩时间（可选）
@@ -267,6 +280,19 @@ impl HistoryCompressor {
     fn count_rounds(conversation_history: &[String], player_name: &str) -> i32 {
         let (rounds, _) = Self::parse_conversation_rounds(conversation_history, player_name);
         rounds.len() as i32
+    }
+
+    /// 分析对话历史，返回完整统计信息
+    /// 用于状态检测，确保 message_count 包含摘要和对话轮次
+    fn analyze_history(conversation_history: &[String], player_name: &str) -> HistoryAnalysis {
+        let (rounds, summaries) = Self::parse_conversation_rounds(conversation_history, player_name);
+        let summary_count = summaries.len() as i32;
+        let round_count = rounds.len() as i32;
+        HistoryAnalysis {
+            total_count: summary_count + round_count,
+            summary_count,
+            round_count,
+        }
     }
 
     /// 计算消息列表中摘要的比例
@@ -1004,15 +1030,16 @@ impl HistoryCompressor {
                     .unwrap_or("玩家")
                     .to_string();
 
-                let round_count = Self::count_rounds(&conversation_history, &player_name);
-                let needs_compression = self.exceeds_threshold(round_count);
+                let analysis = Self::analyze_history(&conversation_history, &player_name);
+                let needs_compression = self.exceeds_threshold(analysis.round_count);
 
                 results.push(CompressionStatus {
                     character_id,
                     character_name,
                     player_name,
                     file_path: file_path.to_string_lossy().to_string(),
-                    message_count: round_count,
+                    message_count: analysis.total_count,
+                    summary_count: analysis.summary_count,
                     needs_compression,
                     last_compressed: None,
                 });
