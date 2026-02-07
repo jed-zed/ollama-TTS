@@ -44,12 +44,12 @@ const AppLayout = () => {
   ];
 
   return (
-    <div className="min-h-screen w-full flex justify-center py-8">
-      {/* Constraints text from user: Desktop interface width fixed at 1440px */}
-      <div className="w-[1440px] h-[900px] flex bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/50">
+    <div className="h-screen w-screen flex overflow-hidden">
+      {/* 主容器：填充整个窗口 */}
+      <div className="w-full h-full flex bg-white/80 backdrop-blur-xl overflow-hidden">
         
         {/* Sidebar */}
-        <div className="w-64 bg-white/50 border-r border-border flex flex-col p-6">
+        <div className="w-64 min-w-[256px] bg-white/50 border-r border-border flex flex-col p-6">
           <div className="flex items-center gap-3 mb-8 px-2">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-500 to-purple-500 flex items-center justify-center shadow-lg transform rotate-3">
               <Settings2 className="text-white w-6 h-6" />

@@ -12,7 +12,7 @@ use tracing::{info, error};
 
 use crate::server::AppState;
 use crate::models::config::{HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT};
-use crate::services::history_compressor::{CompressionStatus, CompressionResult};
+use crate::services::history_compressor::{CompressionStatus, CompressionResult, CompressionResultStatus};
 
 /// 通用 API 响应
 #[derive(Debug, Serialize)]
@@ -178,19 +178,29 @@ pub async fn compress_all(
     let results = compressor.scan_and_compress_all(request.force).await;
 
     let total = results.len();
-    let success_count = results.iter().filter(|r| r.success).count();
+    let success_count = results.iter().filter(|r| r.status == CompressionResultStatus::Success).count();
+    let skipped_count = results.iter().filter(|r| r.status == CompressionResultStatus::Skipped).count();
+    let ignored_count = results.iter().filter(|r| r.status == CompressionResultStatus::Ignored).count();
+    let failed_count = results.iter().filter(|r| r.status == CompressionResultStatus::Failed).count();
+    
     let summaries: Vec<String> = results.iter()
-        .filter(|r| r.success)
+        .filter(|r| r.status == CompressionResultStatus::Success)
         .map(|r| r.message.clone())
         .collect();
 
-    info!("批量压缩完成: {} 成功, {} 失败", success_count, total - success_count);
+    info!(
+        "批量压缩完成: {} 成功, {} 跳过, {} 忽略, {} 失败 (共 {} 个文件)",
+        success_count, skipped_count, ignored_count, failed_count, total
+    );
 
     Json(ApiResponse::success(CompressResponse {
-        success: success_count > 0,
+        success: success_count > 0 || failed_count == 0,
         compressed_count: success_count as i32,
         summaries: if summaries.is_empty() { None } else { Some(summaries) },
-        message: Some(format!("压缩完成: {} 成功, {} 失败", success_count, total - success_count)),
+        message: Some(format!(
+            "压缩完成: {} 成功, {} 跳过, {} 忽略, {} 失败",
+            success_count, skipped_count, ignored_count, failed_count
+        )),
     }))
 }
 

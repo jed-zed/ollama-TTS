@@ -32,9 +32,10 @@ export async function compressHistory(
 
 /**
  * 压缩所有超过阈值的角色
+ * 用户主动点击"压缩全部"按钮时调用，传递 force=true 忽略 enabled 设置
  */
 export async function compressAll(): Promise<ApiResponse<CompressResponse>> {
-  return apiClient.post<CompressResponse>('/api/memory/compress-all', { force: false });
+  return apiClient.post<CompressResponse>('/api/memory/compress-all', { force: true });
 }
 
 /**

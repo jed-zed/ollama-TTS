@@ -33,6 +33,11 @@ export interface HistoryCompressionConfig {
   custom_prompt: string;
 }
 
+export interface PresetApiConfig {
+  api_key: string;
+  model_name: string;
+}
+
 export interface Config {
   // API 配置
   api_url: string;
@@ -40,6 +45,14 @@ export interface Config {
   model_name: string;
   current_api_preset: string;
   system_prompt_injection: string;
+
+  // 自定义预设配置（向后兼容）
+  custom_api_url?: string;
+  custom_api_key?: string;
+  custom_model_name?: string;
+
+  // 按预设独立存储的 API 配置
+  preset_configs?: Record<string, PresetApiConfig>;
 
   // TTS 配置
   tts_enabled: boolean;

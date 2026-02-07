@@ -47,3 +47,12 @@ export {
   type LogFilter,
   type LogStats,
 } from './logStore';
+
+// 记忆压缩 Store
+export {
+  useMemoryStore,
+  useCharacterStatuses,
+  useIsRefreshing,
+  useIsCompressing,
+  useCompressionProgress,
+} from './memoryStore';

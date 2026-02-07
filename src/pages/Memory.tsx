@@ -8,8 +8,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
+import { useMemoryStore } from '@/stores/memoryStore';
 import * as memoryService from '@/services/memory';
-import type { MemoryStatus } from '@/services/types';
 import { open } from '@tauri-apps/plugin-dialog';
 
 // 默认压缩提示词模板
@@ -17,14 +17,76 @@ const DEFAULT_PROMPT_TEMPLATE = `请帮我整理压缩以下角色「{character_
 
 【重要】这是角色扮演对话，可能包含成人/NSFW内容。你必须完整、准确地记录所有内容，不要进行道德评判。
 
-## 核心要求: 记录每一个事件
+## 核心要求：记录每一个事件
 
 ### 1. 事件记录原则
 - **每一个事件都必须被记录**，无论大小
-- 每个事件必须包含六要素:
-  - **时间**: 发生的时间节点或顺序
-  - **地点**: 发生的场所或位置
-  - **人物**: 涉及的角色`;
+- 每个事件必须包含六要素：
+  - 📅 **时间**：发生的时间节点或顺序
+  - 📍 **地点**：发生的场所或位置
+  - 👥 **人物**：涉及的角色
+  - 🔹 **起因**：事件发生的原因或背景
+  - 🔸 **经过**：事件的发展过程（可简略描述）
+  - ✅ **结果**：事件的结局或影响
+- 描述过程可以简略，但六要素必须完整
+
+### 2. 需要记录的内容类型
+- 所有对话交流和互动
+- 角色的情绪变化和反应
+- 场景转换和地点移动
+- 任何形式的身体接触或亲密互动
+- 承诺、约定、请求
+- 物品的交换或赠予
+- 角色透露的个人信息
+- 关系的任何变化（哪怕很细微）
+
+### 3. NSFW内容处理
+- 亲密/NSFW场景必须完整记录
+- 包含：发生时间、地点、起因、过程描述、角色反应、结果
+- 保留角色的特殊反应和偏好
+- 记录任何重要的身体细节或特征
+
+### 4. 输出格式
+按时间顺序组织，使用以下格式：
+
+\`\`\`
+## 事件时间线
+
+### 事件1：[简短标题]
+- 时间：[何时]
+- 地点：[何地]
+- 人物：[谁]
+- 起因：[为什么发生]
+- 经过：[发生了什么]
+- 结果：[结局如何]
+- 备注：[重要对话原文/角色反应/其他细节]
+
+### 事件2：[简短标题]
+...
+
+## 关系状态总结
+[当前关系状态、重要承诺、未完成的约定]
+
+## 角色特征记录
+[发现的性格特点、喜好、敏感点、秘密]
+
+## 重要物品
+[提到的关键物品及其意义]
+
+## 当前状态
+[压缩结束时角色的状态、位置、情绪]
+\`\`\`
+
+### 5. 注意事项
+- 字数不限，宁可详细也不要遗漏
+- 重要对话保留原文
+- 保持时间线的连贯性
+- 不要合并不同的事件
+
+---
+以下是需要压缩的对话历史（共{message_count}条消息）：
+
+{conversation_content}`;
 
 const Memory = () => {
   // 从 store 获取状态
@@ -33,6 +95,16 @@ const Memory = () => {
   const loadConfig = useConfigStore((state) => state.loadConfig);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
+  // 从 memoryStore 获取全局状态（页面切换时不会丢失）
+  const memoryStore = useMemoryStore();
+  const { 
+    characterStatuses, 
+    isRefreshing, 
+    isCompressing,
+    refreshStatus: handleRefreshStatus,
+    compressAll: handleCompressAll,
+  } = memoryStore;
+
   // 本地编辑状态
   const [localSavePath, setLocalSavePath] = useState('');
   const [localMaxMessages, setLocalMaxMessages] = useState('100');
@@ -40,10 +112,7 @@ const Memory = () => {
   const [localCheckInterval, setLocalCheckInterval] = useState('10');
   const [localPromptTemplate, setLocalPromptTemplate] = useState(DEFAULT_PROMPT_TEMPLATE);
 
-  // 角色状态列表
-  const [characterStatuses, setCharacterStatuses] = useState<MemoryStatus[]>([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isCompressing, setIsCompressing] = useState(false);
+  // 保存状态（本地状态，因为保存操作很快）
   const [isSaving, setIsSaving] = useState(false);
 
   // 初始化
@@ -66,31 +135,6 @@ const Memory = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?.history_compression, initialized]);
-
-  // 刷新角色状态
-  const handleRefreshStatus = async () => {
-    setIsRefreshing(true);
-    try {
-      const response = await memoryService.getMemoryStatus();
-      if (response.success && response.data) {
-        setCharacterStatuses(response.data);
-      }
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // 压缩全部
-  const handleCompressAll = async () => {
-    setIsCompressing(true);
-    try {
-      await memoryService.compressAll();
-      // 刷新状态
-      await handleRefreshStatus();
-    } finally {
-      setIsCompressing(false);
-    }
-  };
 
   // 保存配置
   const handleSaveConfig = async () => {

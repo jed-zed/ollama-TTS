@@ -310,36 +310,87 @@ const Service = () => {
     setLocalSystemPrompt('');
   };
 
-  // 处理预设切换
+  // 保存 API 配置到当前预设（实时自动保存）
+  const saveApiConfigToCurrentPreset = useCallback(async (
+    field: 'api_url' | 'api_key' | 'model_name',
+    value: string
+  ) => {
+    const currentPreset = config?.current_api_preset || 'custom';
+    
+    if (currentPreset === 'custom') {
+      // 自定义预设：同时保存到 api_* 和 custom_api_*
+      const updates: Record<string, unknown> = {
+        [field]: value,
+      };
+      if (field === 'api_url') updates.custom_api_url = value;
+      if (field === 'api_key') updates.custom_api_key = value;
+      if (field === 'model_name') updates.custom_model_name = value;
+      await updateConfigBatch(updates);
+    } else {
+      // 其他预设：保存到 api_* 和 preset_configs
+      const currentPresetConfigs = config?.preset_configs || {};
+      const currentConfig = currentPresetConfigs[currentPreset] || { api_key: '', model_name: '' };
+      
+      const updates: Record<string, unknown> = {
+        [field]: value,
+      };
+      
+      // 只有 api_key 和 model_name 需要保存到 preset_configs
+      if (field === 'api_key' || field === 'model_name') {
+        updates.preset_configs = {
+          ...currentPresetConfigs,
+          [currentPreset]: {
+            ...currentConfig,
+            [field]: value,
+          },
+        };
+      }
+      
+      await updateConfigBatch(updates);
+    }
+  }, [config, updateConfigBatch]);
+
+  // 处理预设切换 - 按预设独立存储 API Key 和 Model Name
   const handlePresetChange = async (preset: string) => {
     try {
       const currentPreset = config?.current_api_preset || 'custom';
       
-      // 预设配置：URL 和模型名称
-      const presetConfigs: Record<string, { url: string; model?: string }> = {
-        local: { url: 'http://127.0.0.1:11434/v1/chat/completions' },
-        siliconflow: { url: 'https://api.siliconflow.cn/v1/chat/completions' },
-        volcengine: { url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions' },
-        ggchan: { url: 'https://gcli.ggchan.dev/v1/chat/completions', model: 'gemini-3-pro-preview' },
-        deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat' },
-        openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions' },
-        openai: { url: 'https://api.openai.com/v1/chat/completions' },
+      // 预设配置：URL 和默认模型名称
+      const presetConfigs: Record<string, { url: string; defaultModel?: string }> = {
+        local: { url: 'http://127.0.0.1:11434/v1/chat/completions', defaultModel: '' },
+        siliconflow: { url: 'https://api.siliconflow.cn/v1/chat/completions', defaultModel: '' },
+        volcengine: { url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', defaultModel: '' },
+        ggchan: { url: 'https://gcli.ggchan.dev/v1/chat/completions', defaultModel: 'gemini-3-pro-preview' },
+        deepseek: { url: 'https://api.deepseek.com/v1/chat/completions', defaultModel: 'deepseek-chat' },
+        openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defaultModel: '' },
+        openai: { url: 'https://api.openai.com/v1/chat/completions', defaultModel: '' },
       };
+
+      // 获取当前预设配置存储
+      const currentPresetConfigs = config?.preset_configs || {};
 
       // 构建批量更新对象
       const updates: Record<string, unknown> = {
         current_api_preset: preset,
       };
 
-      // 如果从自定义切换到其他预设，先保存当前自定义数据
-      if (currentPreset === 'custom' && preset !== 'custom') {
+      // 1. 保存当前预设的配置（切换前）
+      if (currentPreset === 'custom') {
         updates.custom_api_url = localApiUrl;
         updates.custom_api_key = localApiKey;
         updates.custom_model_name = localModelName;
+      } else {
+        updates.preset_configs = {
+          ...currentPresetConfigs,
+          [currentPreset]: {
+            api_key: localApiKey,
+            model_name: localModelName,
+          },
+        };
       }
 
+      // 2. 加载目标预设的配置
       if (preset === 'custom') {
-        // 切换到自定义时，恢复之前保存的自定义数据
         const customUrl = config?.custom_api_url || '';
         const customKey = config?.custom_api_key || '';
         const customModel = config?.custom_model_name || '';
@@ -351,12 +402,15 @@ const Service = () => {
         setLocalModelName(customModel);
       } else if (presetConfigs[preset]) {
         const presetConfig = presetConfigs[preset];
+        const savedPresetConfig = currentPresetConfigs[preset] || { api_key: '', model_name: '' };
+        
         updates.api_url = presetConfig.url;
+        updates.api_key = savedPresetConfig.api_key || '';
+        updates.model_name = savedPresetConfig.model_name || presetConfig.defaultModel || '';
+        
         setLocalApiUrl(presetConfig.url);
-        if (presetConfig.model) {
-          updates.model_name = presetConfig.model;
-          setLocalModelName(presetConfig.model);
-        }
+        setLocalApiKey(savedPresetConfig.api_key || '');
+        setLocalModelName(savedPresetConfig.model_name || presetConfig.defaultModel || '');
       }
 
       // 一次性批量更新
@@ -597,7 +651,7 @@ const Service = () => {
               <Input
                 value={localApiUrl}
                 onChange={(e) => setLocalApiUrl(e.target.value)}
-                onBlur={() => updateConfig('api_url', localApiUrl)}
+                onBlur={() => saveApiConfigToCurrentPreset('api_url', localApiUrl)}
                 className="bg-white/50"
                 placeholder="http://127.0.0.1:11434/v1"
                 disabled={proxyStatus === 'running'}
@@ -611,7 +665,7 @@ const Service = () => {
                   type={showApiKey ? "text" : "password"}
                   value={localApiKey}
                   onChange={(e) => setLocalApiKey(e.target.value)}
-                  onBlur={() => updateConfig('api_key', localApiKey)}
+                  onBlur={() => saveApiConfigToCurrentPreset('api_key', localApiKey)}
                   className="bg-white/50 pr-10"
                   placeholder="sk-xxxxxxxxxxxxxxxx"
                   disabled={proxyStatus === 'running'}
@@ -631,7 +685,7 @@ const Service = () => {
                 <Input
                   value={localModelName}
                   onChange={(e) => setLocalModelName(e.target.value)}
-                  onBlur={() => updateConfig('model_name', localModelName)}
+                  onBlur={() => saveApiConfigToCurrentPreset('model_name', localModelName)}
                   className="bg-white/50"
                   placeholder="deepseek-ai/DeepSeek-V3"
                   disabled={proxyStatus === 'running'}

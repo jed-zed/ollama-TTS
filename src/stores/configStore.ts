@@ -89,6 +89,14 @@ const defaultConfig: Config = {
   current_api_preset: 'local',
   system_prompt_injection: '',
 
+  // 自定义预设配置
+  custom_api_url: '',
+  custom_api_key: '',
+  custom_model_name: '',
+
+  // 按预设独立存储的 API 配置
+  preset_configs: {},
+
   tts_enabled: true,
   tts_engine: 'gpt_sovits',
   tts_auto_play: true,
