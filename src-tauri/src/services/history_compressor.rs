@@ -186,31 +186,42 @@ impl HistoryCompressor {
     /// - skip_reason: 如果不需要压缩，跳过的原因
     /// 
     /// 注意：此方法用于实际执行压缩时的判定，会检查 enabled 配置
-    pub fn should_compress(&self, round_count: i32, force: bool) -> (bool, Option<String>) {
+    /// 使用 total_count（摘要数 + 对话轮次数）作为判定基准
+    pub fn should_compress(&self, analysis: &HistoryAnalysis, force: bool) -> (bool, Option<String>) {
         debug!(
-            "📋 should_compress 检查: round_count={}, max_messages={}, enabled={}, force={}",
-            round_count, self.config.max_messages, self.config.enabled, force
+            "📋 should_compress 检查: total={}, summaries={}, rounds={}, max={}, enabled={}, force={}",
+            analysis.total_count, analysis.summary_count, analysis.round_count,
+            self.config.max_messages, self.config.enabled, force
         );
 
         if !self.config.enabled && !force {
             return (false, Some("压缩功能未启用".to_string()));
         }
 
-        if round_count <= self.config.max_messages && !force {
+        if analysis.total_count <= self.config.max_messages && !force {
             return (false, Some(format!(
-                "轮次数 {} 未超过阈值 {}",
-                round_count, self.config.max_messages
+                "总量 {}（{}摘要+{}轮对话）未超过阈值 {}",
+                analysis.total_count, analysis.summary_count, analysis.round_count,
+                self.config.max_messages
             )));
         }
 
         (true, None)
     }
 
-    /// 判断是否超过压缩阈值（仅检查轮次数，不检查 enabled）
+    /// 判断是否超过压缩阈值（基于总量，不检查 enabled）
     /// 
     /// 用于状态检测，显示哪些文件"需要压缩"（即使功能未启用）
-    pub fn exceeds_threshold(&self, round_count: i32) -> bool {
-        round_count > self.config.max_messages
+    /// 使用 total_count（摘要数 + 对话轮次数）作为判定基准
+    pub fn exceeds_threshold(&self, analysis: &HistoryAnalysis) -> bool {
+        let result = analysis.total_count > self.config.max_messages;
+        debug!(
+            "📊 阈值检查: Total({}) > Max({})? {} [summaries={}, rounds={}]",
+            analysis.total_count, self.config.max_messages,
+            if result { "YES -> 需要压缩" } else { "NO -> 无需压缩" },
+            analysis.summary_count, analysis.round_count
+        );
+        result
     }
 
     /// 判断消息是否来自玩家
@@ -753,14 +764,23 @@ impl HistoryCompressor {
             return CompressOutcome::Success(result_msg);
         }
 
-        if total_rounds <= compress_count {
-            return CompressOutcome::Skip(format!(
-                "对话轮次 {} 未超过压缩数量 {}，无需压缩",
-                total_rounds, compress_count
-            ));
+        let total_count = (summary_count as i32) + total_rounds;
+        
+        if total_rounds == 0 {
+            return CompressOutcome::Skip("没有可压缩的对话轮次".to_string());
         }
 
-        let split_index = compress_count.min(total_rounds) as usize;
+        let actual_compress_count = if total_rounds <= compress_count {
+            info!(
+                "[{}] 对话轮次 {} <= 压缩数量 {}，但总量 {} 超标，压缩全部对话轮次",
+                character_name, total_rounds, compress_count, total_count
+            );
+            total_rounds as usize
+        } else {
+            compress_count as usize
+        };
+
+        let split_index = actual_compress_count.min(total_rounds as usize);
 
         let rounds_to_compress: Vec<_> = rounds[..split_index].to_vec();
         let rounds_to_keep: Vec<_> = rounds[split_index..].to_vec();
@@ -876,15 +896,24 @@ impl HistoryCompressor {
             .unwrap_or("玩家")
             .to_string();
 
-        let current_rounds = Self::count_rounds(&conversation_history, &player_name);
+        let analysis = Self::analyze_history(&conversation_history, &player_name);
 
-        if !self.exceeds_threshold(current_rounds) {
-            debug!("[跳过] {} - 对话轮次 {} 未超过阈值 {}，无需压缩", 
-                character_name, current_rounds, self.config.max_messages);
+        info!(
+            "📋 [{}] 压缩判定: Total({}) > Max({})? {} [summaries={}, rounds={}]",
+            character_name, analysis.total_count, self.config.max_messages,
+            if self.exceeds_threshold(&analysis) { "YES" } else { "NO" },
+            analysis.summary_count, analysis.round_count
+        );
+
+        if !self.exceeds_threshold(&analysis) {
+            debug!("[跳过] {} - 总量 {} 未超过阈值 {}，无需压缩", 
+                character_name, analysis.total_count, self.config.max_messages);
             return CompressionResult::skipped(
-                format!("[{}] 对话轮次 {} 未超过阈值 {}，无需压缩", 
-                    character_name, current_rounds, self.config.max_messages),
-                Some(current_rounds),
+                format!("[{}] 总量 {}（{}摘要+{}轮对话）未超过阈值 {}，无需压缩", 
+                    character_name, analysis.total_count, 
+                    analysis.summary_count, analysis.round_count,
+                    self.config.max_messages),
+                Some(analysis.total_count),
             );
         }
 
@@ -892,18 +921,19 @@ impl HistoryCompressor {
             debug!("[跳过] {} - 压缩功能未启用", character_name);
             return CompressionResult::skipped(
                 format!("[{}] 压缩功能未启用", character_name),
-                Some(current_rounds),
+                Some(analysis.total_count),
             );
         }
 
-        info!("[压缩] {} - 开始压缩: 当前 {} 轮对话", character_name, current_rounds);
+        info!("[压缩] {} - 开始压缩: 总量 {}（{}摘要+{}轮对话）", 
+            character_name, analysis.total_count, analysis.summary_count, analysis.round_count);
 
         if self.config.backup_before_compress {
             if self.backup_file(file_path).is_none() {
                 error!("[失败] {} - 备份失败，取消压缩", character_name);
                 return CompressionResult::failed(
                     format!("[{}] 备份失败，取消压缩", character_name),
-                    Some(current_rounds),
+                    Some(analysis.total_count),
                 );
             }
         }
@@ -918,19 +948,19 @@ impl HistoryCompressor {
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect())
                         .unwrap_or_default();
-                    let new_rounds = Self::count_rounds(&new_history, &player_name);
+                    let new_analysis = Self::analyze_history(&new_history, &player_name);
 
                     info!("[成功] {} - {}", character_name, msg);
                     CompressionResult::success(
                         format!("[{}] {}", character_name, msg),
-                        current_rounds,
-                        new_rounds,
+                        analysis.total_count,
+                        new_analysis.total_count,
                     )
                 } else {
                     error!("[失败] {} - 保存失败", character_name);
                     CompressionResult::failed(
                         format!("[{}] 保存失败", character_name),
-                        Some(current_rounds),
+                        Some(analysis.total_count),
                     )
                 }
             }
@@ -938,14 +968,14 @@ impl HistoryCompressor {
                 debug!("[跳过] {} - {}", character_name, reason);
                 CompressionResult::skipped(
                     format!("[{}] {}", character_name, reason),
-                    Some(current_rounds),
+                    Some(analysis.total_count),
                 )
             }
             CompressOutcome::Error(e) => {
                 error!("[失败] {} - 压缩失败: {}", character_name, e);
                 CompressionResult::failed(
                     format!("[{}] 压缩失败: {}", character_name, e),
-                    Some(current_rounds),
+                    Some(analysis.total_count),
                 )
             }
         }
@@ -1031,7 +1061,7 @@ impl HistoryCompressor {
                     .to_string();
 
                 let analysis = Self::analyze_history(&conversation_history, &player_name);
-                let needs_compression = self.exceeds_threshold(analysis.round_count);
+                let needs_compression = self.exceeds_threshold(&analysis);
 
                 results.push(CompressionStatus {
                     character_id,
@@ -1077,16 +1107,18 @@ impl HistoryCompressor {
                     .and_then(|v| v.as_str())
                     .unwrap_or("玩家");
 
-                let current_rounds = Self::count_rounds(&conversation_history, player_name);
+                let analysis = Self::analyze_history(&conversation_history, player_name);
 
-                if current_rounds > self.config.max_messages {
+                if self.exceeds_threshold(&analysis) {
                     let character_name = data.get("Name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("未知");
 
                     info!(
-                        "🔄 [自动压缩] {}: {} 轮对话超过阈值 {}，开始压缩...",
-                        character_name, current_rounds, self.config.max_messages
+                        "🔄 [自动压缩] {}: 总量 {}（{}摘要+{}轮对话）超过阈值 {}，开始压缩...",
+                        character_name, analysis.total_count, 
+                        analysis.summary_count, analysis.round_count,
+                        self.config.max_messages
                     );
 
                     let result = self.check_and_compress_file(&file_path, false).await;
