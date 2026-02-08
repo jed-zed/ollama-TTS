@@ -195,6 +195,19 @@ pub struct TtsResult {
     pub emotion_used: String,
 }
 
+/// 流式 TTS 合成的单个段落结果
+#[derive(Debug, Clone)]
+pub struct TtsSegmentAudio {
+    /// 段落序号（从 0 开始）
+    pub seq: usize,
+    /// 总段落数
+    pub total: usize,
+    /// 音频数据
+    pub audio_data: Vec<u8>,
+    /// 是否为最后一段
+    pub is_last: bool,
+}
+
 /// 引号配对常量
 pub const QUOTE_PAIRS: &[(char, char)] = &[
     ('"', '"'),       // 英文双引号

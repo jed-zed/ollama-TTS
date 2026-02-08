@@ -11,6 +11,7 @@ import GalgameSubtitle from '@/components/GalgameSubtitle';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useStreamStore, useStreamHistory, useIsStreaming, useConnectionStatus, useStreamContent } from '@/stores/streamStore';
 import { subtitleWindow, isTauri } from '@/services/tauri';
+import { useTypewriter } from '@/hooks/useTypewriter';
 
 // 颜色映射
 const fontColorMap: Record<string, string> = {
@@ -116,14 +117,23 @@ const Subtitles = () => {
   // 处理历史记录选择
   const handleHistorySelect = useCallback((historyId: string) => {
     setSelectedHistoryId(historyId);
-    if (historyId) {
-      const selectedItem = history.find(item => item.id === historyId);
-      if (selectedItem) {
-        setContent(selectedItem.content);
-        showSubtitle();
-      }
-    }
-  }, [history, setContent, showSubtitle]);
+  }, []);
+
+  // 获取选中的历史记录内容
+  const selectedHistoryContent = useMemo(() => {
+    if (!selectedHistoryId) return null;
+    const item = history.find(h => h.id === selectedHistoryId);
+    return item?.content ?? null;
+  }, [selectedHistoryId, history]);
+
+  // 流式窗口的打字机效果 - 只对当前流式内容使用，历史记录直接显示
+  const charDelay = config?.char_delay ?? 30;
+  const { displayedText: streamTypedText, isTyping: streamIsTyping } = useTypewriter(currentContent || '', {
+    charDelay,
+  });
+  
+  // 最终显示的文本：历史记录直接显示，当前内容使用打字机效果
+  const finalDisplayText = selectedHistoryContent || streamTypedText;
 
   // 从配置派生颜色选择状态 - 使用 useMemo 避免无限循环
   const selectedFontColor = useMemo(() => {
@@ -488,7 +498,7 @@ const Subtitles = () => {
                       <div className="w-full text-center mb-6 text-muted-foreground text-sm font-medium bg-white/40 px-3 py-1 rounded-full inline-block backdrop-blur-sm">
                         字幕页面 - Galgame 风格悬浮字幕
                       </div>
-                      <GalgameSubtitle />
+                      <GalgameSubtitle selectedHistoryContent={selectedHistoryContent} />
                     </TabsContent>
 
                     {/* 流式窗口模式 */}
@@ -552,19 +562,30 @@ const Subtitles = () => {
                         {/* AI 回复内容区域 - 只显示当前内容 */}
                         <div className="flex-1 p-6 overflow-auto" role="log" aria-live="polite">
                           <div className="space-y-4">
-                            {!currentContent && !isStreaming ? (
+                            {!currentContent && !isStreaming && !selectedHistoryContent ? (
                               <div className="text-center text-muted-foreground py-8">
                                 暂无消息，等待 AI 回复...
                               </div>
                             ) : (
                               <div className="p-4 bg-white rounded-xl border-2 border-pink-200 shadow-sm">
+                                {selectedHistoryContent && (
+                                  <div className="mb-2 flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">📜 查看历史记录</span>
+                                    <button 
+                                      className="text-xs text-pink-500 hover:text-pink-600"
+                                      onClick={() => setSelectedHistoryId('')}
+                                    >
+                                      返回当前
+                                    </button>
+                                  </div>
+                                )}
                                 <p className="text-slate-700 leading-relaxed">
-                                  {currentContent}
-                                  {isStreaming && (
+                                  {finalDisplayText}
+                                  {!selectedHistoryContent && (isStreaming || streamIsTyping) && (
                                     <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
                                   )}
                                 </p>
-                                {currentSpeaker && (
+                                {!selectedHistoryContent && currentSpeaker && (
                                   <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100/50">
                                     <span className="text-xs text-muted-foreground">
                                       {currentSpeaker} {currentEmotion && `· ${currentEmotion}`}

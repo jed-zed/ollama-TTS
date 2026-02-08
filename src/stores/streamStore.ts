@@ -8,6 +8,24 @@ import type { StreamMessage, StreamEvent, ConnectionStatus } from '../services/t
 import * as streamService from '../services/stream';
 import { subtitleWindow, isTauri } from '../services/tauri';
 
+const HISTORY_STORAGE_KEY = 'stream-history';
+
+const loadHistoryFromStorage = (): StreamMessage[] => {
+  try {
+    const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveHistoryToStorage = (history: StreamMessage[]) => {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(-20)));
+  } catch {
+  }
+};
+
 // 发送内容更新到独立窗口
 const emitContentToOverlay = (text: string, speaker: string | null, isStreaming: boolean) => {
   if (isTauri()) {
@@ -72,7 +90,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   currentEmotion: null,
   isStreaming: false,
   subtitleVisible: false,
-  history: [],
+  history: loadHistoryFromStorage(),
   charDelay: 30,
   autoScroll: true,
 
@@ -143,14 +161,22 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   },
 
   addToHistory: (message) =>
-    set((state) => ({
-      history: [...state.history, message].slice(-10),
-    })),
+    set((state) => {
+      const newHistory = [...state.history, message].slice(-20);
+      saveHistoryToStorage(newHistory);
+      return { history: newHistory };
+    }),
 
   loadHistory: async () => {
+    const localHistory = loadHistoryFromStorage();
+    if (localHistory.length > 0) {
+      set({ history: localHistory });
+      return;
+    }
     const response = await streamService.getStreamHistory();
     if (response.success && response.data) {
       set({ history: response.data });
+      saveHistoryToStorage(response.data);
     }
   },
 
@@ -158,6 +184,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     const response = await streamService.clearStreamHistory();
     if (response.success) {
       set({ history: [] });
+      saveHistoryToStorage([]);
     }
   },
 
@@ -181,14 +208,18 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             emotion: state.currentEmotion ?? undefined,
             timestamp: Date.now(),
           };
-          set((s) => ({
-            history: [...s.history, message].slice(-10),
-            currentContent: '',
-            currentSpeaker: event.data.speaker ?? null,
-            currentEmotion: event.data.emotion ?? null,
-            isStreaming: true,
-            subtitleVisible: true,
-          }));
+          set((s) => {
+            const newHistory = [...s.history, message].slice(-20);
+            saveHistoryToStorage(newHistory);
+            return {
+              history: newHistory,
+              currentContent: '',
+              currentSpeaker: event.data.speaker ?? null,
+              currentEmotion: event.data.emotion ?? null,
+              isStreaming: true,
+              subtitleVisible: true,
+            };
+          });
         } else {
           set({
             currentContent: '',
@@ -201,11 +232,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         break;
 
       case 'content':
+        // 确保字幕窗口显示
+        if (isTauri() && !state.subtitleVisible) {
+          subtitleWindow.show();
+        }
         if (event.data.full_content !== undefined) {
           emitContentToOverlay(event.data.full_content, state.currentSpeaker, true);
           set({
             currentContent: event.data.full_content,
             isStreaming: true,
+            subtitleVisible: true,
           });
         } else if (event.data.content) {
           set((s) => {
@@ -214,6 +250,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             return {
               currentContent: newContent,
               isStreaming: true,
+              subtitleVisible: true,
             };
           });
         }

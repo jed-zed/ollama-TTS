@@ -915,6 +915,177 @@ impl GPTSoVITSEngine {
         }
     }
 
+    /// 流式合成语音（边合成边发送）
+    /// 
+    /// 每合成完一个段落就通过 channel 发送，实现边合成边播放。
+    pub async fn synthesize_streaming(
+        &mut self,
+        request: TtsRequest,
+        tx: tokio::sync::mpsc::Sender<crate::models::tts_types::TtsSegmentAudio>,
+    ) -> TtsResult {
+        use crate::models::tts_types::TtsSegmentAudio;
+        
+        if request.text.trim().is_empty() {
+            return TtsResult {
+                success: false,
+                error: Some("文本为空".to_string()),
+                ..Default::default()
+            };
+        }
+
+        info!("🎤 TTS 流式合成请求:");
+        info!("   📝 文本: {}...", request.text.chars().take(40).collect::<String>());
+        info!("   👤 speaker: {}", if request.speaker.is_empty() { "(空)" } else { &request.speaker });
+        info!("   🚻 gender: {}", if request.gender.is_empty() { "(空)" } else { &request.gender });
+
+        let target_character = self.resolve_target_character(&request.speaker, &request.gender);
+        
+        if target_character.is_empty() {
+            return TtsResult {
+                success: false,
+                error: Some("没有配置任何 TTS 角色。请在语音设置中添加角色配置。".to_string()),
+                ..Default::default()
+            };
+        }
+        
+        let mut ref_audios = if let Some(emotion_vector) = &request.emotion_vector {
+            self.select_ref_audios_by_emotion_vector(&target_character, emotion_vector)
+        } else {
+            self.select_audio_by_emotion(&target_character, &request.emotion)
+                .map(|a| vec![a])
+                .unwrap_or_default()
+        };
+
+        if ref_audios.is_empty() {
+            info!("🎵 情感音频匹配失败，尝试随机选择参考音频");
+            if let Some(random_audio) = self.get_random_ref_audio(&target_character) {
+                ref_audios = vec![random_audio];
+            }
+        }
+
+        if ref_audios.is_empty() {
+            return TtsResult {
+                success: false,
+                error: Some(format!(
+                    "未找到匹配的参考音频。请检查角色 '{}' 的配置",
+                    target_character
+                )),
+                ..Default::default()
+            };
+        }
+
+        let primary_audio = &ref_audios[0];
+        self.switch_model_if_needed(&target_character).await;
+
+        let text_segments = self.split_text(request.text.trim(), 40);
+        let total_segments = text_segments.len();
+        
+        info!("🎵 GSV TTS 流式合成: {} 段 | 角色={}", total_segments, target_character);
+
+        let is_v2_api = self.api_url.trim_end_matches('/').ends_with("/tts");
+        let mut success_count = 0;
+
+        for (i, segment_text) in text_segments.iter().enumerate() {
+            let preview: String = segment_text.chars().take(25).collect();
+            info!("   📝 合成段落 {}/{}: {}...", i + 1, total_segments, preview);
+
+            let payload = if is_v2_api {
+                serde_json::json!({
+                    "text": segment_text,
+                    "text_lang": "zh",
+                    "ref_audio_path": primary_audio.audio_file,
+                    "prompt_text": primary_audio.text,
+                    "prompt_lang": "zh",
+                    "top_k": self.top_k,
+                    "top_p": self.top_p,
+                    "temperature": self.temperature,
+                    "speed": request.speed
+                })
+            } else {
+                serde_json::json!({
+                    "text": segment_text,
+                    "text_language": "zh",
+                    "refer_wav_path": primary_audio.audio_file,
+                    "prompt_text": primary_audio.text,
+                    "prompt_language": "zh"
+                })
+            };
+
+            match self.client
+                .post(&self.api_url)
+                .json(&payload)
+                .timeout(self.timeout)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let content_type = response.headers()
+                            .get("content-type")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+
+                        if content_type.contains("audio") || content_type.contains("wav") || content_type.contains("octet-stream") {
+                            match response.bytes().await {
+                                Ok(bytes) => {
+                                    let audio_data = bytes.to_vec();
+                                    let data_len = audio_data.len();
+                                    let is_last = i == total_segments - 1;
+                                    
+                                    let segment_audio = TtsSegmentAudio {
+                                        seq: i,
+                                        total: total_segments,
+                                        audio_data,
+                                        is_last,
+                                    };
+                                    
+                                    if tx.send(segment_audio).await.is_ok() {
+                                        info!("   ✅ 段落 {}/{} 已发送: {} 字节", i + 1, total_segments, data_len);
+                                        success_count += 1;
+                                    } else {
+                                        error!("   ❌ 段落 {} 发送失败: channel 已关闭", i + 1);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("   ❌ 段落 {} 读取响应失败: {}", i + 1, e);
+                                }
+                            }
+                        } else {
+                            error!("   ❌ 段落 {} 未知响应格式: {}", i + 1, content_type);
+                        }
+                    } else {
+                        error!("   ❌ 段落 {} HTTP {}", i + 1, response.status());
+                    }
+                }
+                Err(e) => {
+                    if e.is_timeout() {
+                        error!("   ❌ 段落 {} 请求超时", i + 1);
+                    } else if e.is_connect() {
+                        error!("   ❌ 段落 {} 连接失败", i + 1);
+                    } else {
+                        error!("   ❌ 段落 {} 异常: {}", i + 1, e);
+                    }
+                }
+            }
+        }
+
+        if success_count == 0 {
+            TtsResult {
+                success: false,
+                error: Some("所有段落合成失败".to_string()),
+                ..Default::default()
+            }
+        } else {
+            info!("GSV TTS 流式合成完成: {}/{} 段成功", success_count, total_segments);
+            TtsResult {
+                success: true,
+                speaker_used: target_character,
+                emotion_used: request.emotion,
+                ..Default::default()
+            }
+        }
+    }
+
     /// 测试 API 连接（使用 TCP Socket，与 Python 实现一致）
     pub async fn test_connection(&self) -> bool {
         info!("开始测试 GSV API 连接，当前 URL: {}", self.api_url);

@@ -309,29 +309,40 @@ async fn process_stream_response(
                         is_nsfw,
                     };
                     
+                    let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
+                    
+                    let mgr_for_receiver = mgr.clone();
+                    let bc_for_receiver = bc.clone();
+                    
+                    let receiver_handle = tokio::spawn(async move {
+                        let mut received_count = 0;
+                        let mut total_bytes = 0;
+                        while let Some(segment_audio) = rx.recv().await {
+                            received_count += 1;
+                            total_bytes += segment_audio.audio_data.len();
+                            
+                            let mut manager = mgr_for_receiver.lock().await;
+                            manager.enqueue_audio_buffered(
+                                segment_audio.seq,
+                                segment_audio.total,
+                                segment_audio.audio_data,
+                            );
+                            
+                            if segment_audio.is_last {
+                                broadcast_log(&bc_for_receiver, "SUCCESS", 
+                                    &format!("TTS 流式合成完成: {} 段, {} 字节", received_count, total_bytes));
+                            }
+                        }
+                    });
+                    
                     let audio_result = {
                         let mut engine = gsv.lock().await;
-                        engine.synthesize(tts_request).await
+                        engine.synthesize_streaming(tts_request, tx).await
                     };
                     
-                    if audio_result.success {
-                        let mut manager = mgr.lock().await;
-                        
-                        if let Some(segments) = audio_result.audio_segments {
-                            let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
-                            info!("TTS 合成成功: {} 段, 共 {} 字节", segments.len(), total_bytes);
-                            broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
-                            
-                            for (i, segment_data) in segments.into_iter().enumerate() {
-                                info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
-                                manager.play_audio(segment_data);
-                            }
-                        } else if let Some(audio_data) = audio_result.audio_data {
-                            info!("TTS 合成成功: {} 字节", audio_data.len());
-                            broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
-                            manager.play_audio(audio_data);
-                        }
-                    } else {
+                    let _ = receiver_handle.await;
+                    
+                    if !audio_result.success {
                         let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
                         error!("TTS 合成失败: {}", err_msg);
                         broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));
@@ -521,29 +532,40 @@ async fn process_fake_stream_response(
                     is_nsfw,
                 };
                 
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
+                
+                let mgr_for_receiver = mgr.clone();
+                let bc_for_receiver = bc.clone();
+                
+                let receiver_handle = tokio::spawn(async move {
+                    let mut received_count = 0;
+                    let mut total_bytes = 0;
+                    while let Some(segment_audio) = rx.recv().await {
+                        received_count += 1;
+                        total_bytes += segment_audio.audio_data.len();
+                        
+                        let mut manager = mgr_for_receiver.lock().await;
+                        manager.enqueue_audio_buffered(
+                            segment_audio.seq,
+                            segment_audio.total,
+                            segment_audio.audio_data,
+                        );
+                        
+                        if segment_audio.is_last {
+                            broadcast_log(&bc_for_receiver, "SUCCESS", 
+                                &format!("TTS 流式合成完成: {} 段, {} 字节", received_count, total_bytes));
+                        }
+                    }
+                });
+                
                 let audio_result = {
                     let mut engine = gsv.lock().await;
-                    engine.synthesize(tts_request).await
+                    engine.synthesize_streaming(tts_request, tx).await
                 };
                 
-                if audio_result.success {
-                    let mut manager = mgr.lock().await;
-                    
-                    if let Some(segments) = audio_result.audio_segments {
-                        let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
-                        info!("TTS 合成成功（假流式）: {} 段, 共 {} 字节", segments.len(), total_bytes);
-                        broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
-                        
-                        for (i, segment_data) in segments.into_iter().enumerate() {
-                            info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
-                            manager.play_audio(segment_data);
-                        }
-                    } else if let Some(audio_data) = audio_result.audio_data {
-                        info!("TTS 合成成功: {} 字节", audio_data.len());
-                        broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
-                        manager.play_audio(audio_data);
-                    }
-                } else {
+                let _ = receiver_handle.await;
+                
+                if !audio_result.success {
                     let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
                     error!("TTS 合成失败: {}", err_msg);
                     broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));
@@ -712,29 +734,40 @@ async fn process_non_stream_response(
                             is_nsfw,
                         };
                         
+                        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
+                        
+                        let mgr_for_receiver = mgr.clone();
+                        let bc_for_receiver = bc.clone();
+                        
+                        let receiver_handle = tokio::spawn(async move {
+                            let mut received_count = 0;
+                            let mut total_bytes = 0;
+                            while let Some(segment_audio) = rx.recv().await {
+                                received_count += 1;
+                                total_bytes += segment_audio.audio_data.len();
+                                
+                                let mut manager = mgr_for_receiver.lock().await;
+                                manager.enqueue_audio_buffered(
+                                    segment_audio.seq,
+                                    segment_audio.total,
+                                    segment_audio.audio_data,
+                                );
+                                
+                                if segment_audio.is_last {
+                                    broadcast_log(&bc_for_receiver, "SUCCESS", 
+                                        &format!("TTS 流式合成完成: {} 段, {} 字节", received_count, total_bytes));
+                                }
+                            }
+                        });
+                        
                         let audio_result = {
                             let mut engine = gsv.lock().await;
-                            engine.synthesize(tts_request).await
+                            engine.synthesize_streaming(tts_request, tx).await
                         };
                         
-                        if audio_result.success {
-                            let mut manager = mgr.lock().await;
-                            
-                            if let Some(segments) = audio_result.audio_segments {
-                                let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
-                                info!("TTS 合成成功（非流式）: {} 段, 共 {} 字节", segments.len(), total_bytes);
-                                broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 段, {} 字节", segments.len(), total_bytes));
-                                
-                                for (i, segment_data) in segments.into_iter().enumerate() {
-                                    info!("播放段落 {}: {} 字节", i + 1, segment_data.len());
-                                    manager.play_audio(segment_data);
-                                }
-                            } else if let Some(audio_data) = audio_result.audio_data {
-                                info!("TTS 合成成功: {} 字节", audio_data.len());
-                                broadcast_log(&bc, "SUCCESS", &format!("TTS 合成完成: {} 字节", audio_data.len()));
-                                manager.play_audio(audio_data);
-                            }
-                        } else {
+                        let _ = receiver_handle.await;
+                        
+                        if !audio_result.success {
                             let err_msg = audio_result.error.unwrap_or_else(|| "未知错误".to_string());
                             error!("TTS 合成失败: {}", err_msg);
                             broadcast_log(&bc, "ERROR", &format!("TTS 合成失败: {}", err_msg));

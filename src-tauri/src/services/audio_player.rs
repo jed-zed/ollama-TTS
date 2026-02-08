@@ -5,19 +5,30 @@
 //! - 支持播放队列
 //! - 支持停止、音量控制
 //! - 支持回调通知
+//! - 支持缓冲播放模式（边合成边播放）
 
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use tracing::{info, error};
+use std::collections::BTreeMap;
+use tracing::{info, error, debug};
 use rodio::{Decoder, OutputStream, Sink};
 
 /// 播放器命令
 enum PlayerCommand {
     /// 播放音频数据
     Play(Vec<u8>),
+    /// 缓冲播放模式：带序号的音频段落
+    PlayBuffered {
+        /// 段落序号（从 0 开始）
+        seq: usize,
+        /// 总段落数
+        total: usize,
+        /// 音频数据
+        data: Vec<u8>,
+    },
     /// 停止当前播放
     Stop,
     /// 停止所有并清空队列
@@ -114,6 +125,12 @@ impl TTSPlayer {
 
         let mut audio_queue: Vec<Vec<u8>> = Vec::new();
         let mut playing = false;
+        
+        let mut buffered_segments: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+        let mut buffered_total: usize = 0;
+        let mut buffered_next_seq: usize = 0;
+        let mut buffered_started: bool = false;
+        const BUFFER_THRESHOLD: usize = 2;
 
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -123,6 +140,35 @@ impl TTSPlayer {
                         audio_queue.push(data);
                         if let Ok(mut s) = status.lock() {
                             s.queue_size = audio_queue.len();
+                        }
+                    }
+                    PlayerCommand::PlayBuffered { seq, total, data } => {
+                        debug!("收到缓冲播放命令: seq={}/{}, {} 字节", seq, total, data.len());
+                        
+                        if seq == 0 && (buffered_total != total || buffered_next_seq != 0) {
+                            if !buffered_segments.is_empty() {
+                                info!("新对话开始，清空旧缓冲区 (旧: {} 段)", buffered_segments.len());
+                            }
+                            buffered_segments.clear();
+                            buffered_next_seq = 0;
+                            buffered_started = false;
+                        }
+                        
+                        buffered_segments.insert(seq, data);
+                        buffered_total = total;
+                        
+                        if !buffered_started {
+                            let ready_count = buffered_segments.len();
+                            let is_last_segment = seq == total - 1;
+                            
+                            if ready_count >= BUFFER_THRESHOLD || is_last_segment || total == 1 {
+                                buffered_started = true;
+                                info!("缓冲播放启动: 已缓冲 {} 段 (阈值={})", ready_count, BUFFER_THRESHOLD);
+                            }
+                        }
+                        
+                        if let Ok(mut s) = status.lock() {
+                            s.queue_size = audio_queue.len() + buffered_segments.len();
                         }
                     }
                     PlayerCommand::Stop => {
@@ -135,6 +181,10 @@ impl TTSPlayer {
                     PlayerCommand::StopAll => {
                         sink.stop();
                         audio_queue.clear();
+                        buffered_segments.clear();
+                        buffered_total = 0;
+                        buffered_next_seq = 0;
+                        buffered_started = false;
                         playing = false;
                         if let Ok(mut s) = status.lock() {
                             s.playing = false;
@@ -157,7 +207,6 @@ impl TTSPlayer {
                     }
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // 检查当前播放状态
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     info!("播放器通道断开");
@@ -165,13 +214,12 @@ impl TTSPlayer {
                 }
             }
 
-            // 如果当前没有在播放且队列不为空，播放下一个
             if sink.empty() && !audio_queue.is_empty() {
                 let audio_data = audio_queue.remove(0);
                 let data_len = audio_data.len();
                 
                 if let Ok(mut s) = status.lock() {
-                    s.queue_size = audio_queue.len();
+                    s.queue_size = audio_queue.len() + buffered_segments.len();
                 }
 
                 match Decoder::new(Cursor::new(audio_data)) {
@@ -187,8 +235,44 @@ impl TTSPlayer {
                         error!("音频解码失败: {} (数据大小: {} 字节)", e, data_len);
                     }
                 }
-            } else if sink.empty() && playing {
-                info!("当前音频播放完成，队列已空");
+            }
+            
+            if sink.empty() && audio_queue.is_empty() && buffered_started {
+                if let Some(audio_data) = buffered_segments.remove(&buffered_next_seq) {
+                    let data_len = audio_data.len();
+                    let current_seq = buffered_next_seq;
+                    buffered_next_seq += 1;
+                    
+                    if let Ok(mut s) = status.lock() {
+                        s.queue_size = buffered_segments.len();
+                    }
+
+                    match Decoder::new(Cursor::new(audio_data)) {
+                        Ok(source) => {
+                            sink.append(source);
+                            playing = true;
+                            if let Ok(mut s) = status.lock() {
+                                s.playing = true;
+                            }
+                            info!("播放缓冲段落 {}/{}: {} 字节 (剩余: {})", 
+                                  current_seq + 1, buffered_total, data_len, buffered_segments.len());
+                        }
+                        Err(e) => {
+                            error!("缓冲音频解码失败: {} (seq={}, 数据大小: {} 字节)", e, current_seq, data_len);
+                        }
+                    }
+                    
+                    if buffered_next_seq >= buffered_total && buffered_segments.is_empty() {
+                        info!("缓冲播放完成，重置状态");
+                        buffered_total = 0;
+                        buffered_next_seq = 0;
+                        buffered_started = false;
+                    }
+                }
+            }
+            
+            if sink.empty() && playing && audio_queue.is_empty() && buffered_segments.is_empty() {
+                debug!("当前音频播放完成，队列已空");
                 playing = false;
                 if let Ok(mut s) = status.lock() {
                     s.playing = false;
@@ -213,6 +297,25 @@ impl TTSPlayer {
             }
         } else {
             error!("播放器通道未创建，无法发送播放命令");
+        }
+    }
+
+    /// 将音频加入缓冲播放队列（边合成边播放模式）
+    pub fn enqueue_buffered(&mut self, seq: usize, total: usize, audio_data: Vec<u8>) {
+        if !self.initialized {
+            info!("播放器未初始化，正在初始化...");
+            self.initialize();
+        }
+
+        if let Some(tx) = &self.command_tx {
+            let data_len = audio_data.len();
+            if tx.send(PlayerCommand::PlayBuffered { seq, total, data: audio_data }).is_err() {
+                error!("发送缓冲播放命令失败");
+            } else {
+                debug!("缓冲播放命令已发送: seq={}/{}, {} 字节", seq, total, data_len);
+            }
+        } else {
+            error!("播放器通道未创建，无法发送缓冲播放命令");
         }
     }
 
@@ -355,6 +458,17 @@ impl TTSManager {
         }
         
         self.player.enqueue(audio_data);
+    }
+
+    /// 将音频加入缓冲播放队列（边合成边播放模式）
+    pub fn enqueue_audio_buffered(&mut self, seq: usize, total: usize, audio_data: Vec<u8>) {
+        if !self.enabled {
+            return;
+        }
+        
+        if self.auto_play {
+            self.player.enqueue_buffered(seq, total, audio_data);
+        }
     }
 
     /// 停止播放

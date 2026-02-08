@@ -7,9 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useConfig, useConfigStore } from '@/stores/configStore';
 import { useStreamContent, useIsStreaming } from '@/stores/streamStore';
+import { useTypewriter } from '@/hooks/useTypewriter';
 
 interface GalgameSubtitleProps {
   text?: string;
+  selectedHistoryContent?: string | null;
   className?: string;
   onClose?: () => void;
   onMinimize?: () => void;
@@ -26,6 +28,7 @@ const DEFAULT_SUBTITLE_CONFIG = {
 
 const GalgameSubtitle = ({
   text,
+  selectedHistoryContent,
   className,
   onClose,
   onMinimize,
@@ -46,13 +49,22 @@ const GalgameSubtitle = ({
   const [passThrough, setPassThrough] = useState(false);
   const [inputText, setInputText] = useState('');
 
-  const displayText = text ?? streamContent ?? "哈......你这家伙，真是有意思呢。竟然能找到这里来，看来我也不能小看你了。";
-
   const opacity = Math.round((config?.subtitle_opacity ?? 0.9) * 100);
   const speed = config?.char_delay ?? 30;
   const fontSize = config?.subtitle_font_size ?? 18;
   const fontColor = config?.subtitle_font_color ?? '#ffffff';
   const bgColor = config?.subtitle_bg_color ?? 'rgba(255,255,255,0.1)';
+
+  const isShowingHistory = !!selectedHistoryContent;
+  const rawStreamText = text || streamContent || "哈......你这家伙，真是有意思呢。竟然能找到这里来，看来我也不能小看你了。";
+  
+  // 只对非历史记录内容使用打字机效果
+  const { displayedText: typedText, isTyping } = useTypewriter(rawStreamText, {
+    charDelay: speed,
+  });
+
+  // 历史记录直接显示，当前内容使用打字机效果
+  const displayText = isShowingHistory ? selectedHistoryContent : typedText;
 
   const subtitleStyle = useMemo((): CSSProperties => {
     const bgOpacity = opacity / 100;
@@ -247,13 +259,19 @@ const GalgameSubtitle = ({
 
           <div className="absolute bottom-2 left-2 w-1/4 h-1 bg-gradient-to-r from-pink-200 to-transparent rounded-full" aria-hidden="true" />
 
+          {isShowingHistory && (
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">📜 查看历史记录</span>
+            </div>
+          )}
+
           <p
             className="leading-relaxed font-medium relative z-10"
             role="status"
             style={{ fontSize: `${fontSize}px`, color: fontColor }}
           >
             {displayText}
-            {isStreaming && (
+            {!isShowingHistory && (isStreaming || isTyping) && (
               <span
                 className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse"
                 aria-hidden="true"

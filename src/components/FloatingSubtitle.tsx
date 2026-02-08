@@ -117,7 +117,7 @@ const THEMES: Record<ThemeKey, ThemeConfig> = {
   }
 };
 
-const FloatingSubtitle: React.FC = () => {
+const FloatingSubtitleInner: React.FC = () => {
   const config = useConfig();
   const updateConfig = useConfigStore((state) => state.updateConfig);
   
@@ -209,11 +209,6 @@ const FloatingSubtitle: React.FC = () => {
       subtitleWindow.hide().catch(console.error);
     }
   }, [subtitleVisible]);
-
-  // Tauri 环境下不渲染浏览器内字幕，直接使用独立窗口
-  if (isTauri()) {
-    return null;
-  }
 
   useEffect(() => {
     const savedPos = localStorage.getItem(STORAGE_KEY);
@@ -713,6 +708,13 @@ const FloatingSubtitle: React.FC = () => {
   );
   
   return typeof document !== 'undefined' ? createPortal(fullContent, document.body) : null;
+};
+
+const FloatingSubtitle: React.FC = () => {
+  if (isTauri()) {
+    return null;
+  }
+  return <FloatingSubtitleInner />;
 };
 
 export default FloatingSubtitle;
