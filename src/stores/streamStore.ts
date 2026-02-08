@@ -130,7 +130,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   finishStream: () => {
     const state = get();
-    if (state.currentContent) {
+    if (state.currentContent && state.currentContent.length > 10) {
       const message: StreamMessage = {
         id: `msg_${Date.now()}`,
         content: state.currentContent,
@@ -139,10 +139,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         timestamp: Date.now(),
       };
       emitContentToOverlay(state.currentContent, state.currentSpeaker, false);
-      set((s) => ({
-        history: [...s.history, message].slice(-10),
-        isStreaming: false,
-      }));
+      set((s) => {
+        const newHistory = [...s.history, message].slice(-20);
+        saveHistoryToStorage(newHistory);
+        return {
+          history: newHistory,
+          isStreaming: false,
+        };
+      });
+    } else {
+      set({ isStreaming: false });
     }
   },
 

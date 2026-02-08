@@ -1,4 +1,4 @@
-import React, { useId, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
 import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,7 +69,6 @@ const Subtitles = () => {
   const currentEmotion = useStreamStore((state) => state.currentEmotion);
   const clearHistory = useStreamStore((state) => state.clearHistory);
   const loadHistory = useStreamStore((state) => state.loadHistory);
-  const addToHistory = useStreamStore((state) => state.addToHistory);
   const showSubtitle = useStreamStore((state) => state.showSubtitle);
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
   const setContent = useStreamStore((state) => state.setContent);
@@ -81,9 +80,6 @@ const Subtitles = () => {
   const [autoShow, setAutoShow] = useState(true);
   const [autoClose, setAutoClose] = useState(true);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('');
-  
-  const prevIsStreamingRef = useRef(isStreaming);
-  const prevContentRef = useRef(currentContent);
 
   // 初始化 - 只在组件挂载时执行一次
   useEffect(() => {
@@ -91,21 +87,6 @@ const Subtitles = () => {
     loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // 监听流式结束，自动保存历史记录
-  useEffect(() => {
-    if (prevIsStreamingRef.current && !isStreaming && prevContentRef.current && prevContentRef.current.length > 10) {
-      addToHistory({
-        id: `msg_${Date.now()}`,
-        content: prevContentRef.current,
-        speaker: currentSpeaker ?? undefined,
-        emotion: currentEmotion ?? undefined,
-        timestamp: Date.now(),
-      });
-    }
-    prevIsStreamingRef.current = isStreaming;
-    prevContentRef.current = currentContent;
-  }, [isStreaming, currentContent, currentSpeaker, currentEmotion, addToHistory]);
 
   // 同步鼠标穿透到 Tauri 窗口
   useEffect(() => {

@@ -127,8 +127,6 @@ const FloatingSubtitleInner: React.FC = () => {
   const subtitleVisible = useSubtitleVisible();
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
   const history = useStreamHistory();
-  const addToHistory = useStreamStore((state) => state.addToHistory);
-  const prevIsStreamingRef = useRef(false);
 
   const configCharDelay = config?.char_delay ?? 30;
   const { displayedText, isTyping, reset: resetTypewriter } = useTypewriter(streamContent, {
@@ -263,18 +261,6 @@ const FloatingSubtitleInner: React.FC = () => {
       setSelectedHistoryId(null);
     }
   }, [isStreaming]);
-
-  useEffect(() => {
-    if (prevIsStreamingRef.current && !isStreaming && streamContent && streamContent.length > 10) {
-      addToHistory({
-        id: `msg_${Date.now()}`,
-        content: streamContent,
-        speaker: currentSpeaker ?? undefined,
-        timestamp: Date.now(),
-      });
-    }
-    prevIsStreamingRef.current = isStreaming;
-  }, [isStreaming, streamContent, currentSpeaker, addToHistory]);
 
   useEffect(() => {
     if (position.x !== 0 || position.y !== 0) {
