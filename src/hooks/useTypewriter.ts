@@ -1,6 +1,10 @@
 /**
  * 匀速打字效果 Hook
  * 提供流畅的逐字显示效果，支持流式输入
+ * 
+ * 使用 requestAnimationFrame 替代 setTimeout，避免后台节流问题
+ * 现代浏览器会对后台标签页的 setTimeout 进行节流（最小间隔 1000ms），
+ * 但 requestAnimationFrame 在窗口可见时不受此限制
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -35,129 +39,139 @@ export function useTypewriter(
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const bufferRef = useRef<string[]>([]);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastTimestampRef = useRef<number>(0);
   const lastTextRef = useRef('');
   const prevSourceTextRef = useRef('');
   const charDelayRef = useRef(charDelay);
+  const isActiveRef = useRef(false);
 
   charDelayRef.current = charDelay;
+
+  /**
+   * 停止动画循环
+   */
+  const stopAnimation = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    isActiveRef.current = false;
+  }, []);
 
   /**
    * 重置所有状态（用于外部调用）
    */
   const reset = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    stopAnimation();
     bufferRef.current = [];
     lastTextRef.current = '';
     prevSourceTextRef.current = '';
+    lastTimestampRef.current = 0;
     setIsTyping(false);
     setDisplayedText('');
-  }, []);
+  }, [stopAnimation]);
 
   /**
    * 立即显示全部内容
    */
   const complete = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    stopAnimation();
     bufferRef.current = [];
     setIsTyping(false);
     setDisplayedText(lastTextRef.current);
+  }, [stopAnimation]);
+
+  /**
+   * 使用 requestAnimationFrame 的动画循环
+   * 通过时间戳控制字符显示间隔，避免后台节流问题
+   */
+  const startAnimation = useCallback(() => {
+    if (isActiveRef.current) return;
+    isActiveRef.current = true;
+
+    const animate = (timestamp: number) => {
+      if (!isActiveRef.current) return;
+
+      if (lastTimestampRef.current === 0) {
+        lastTimestampRef.current = timestamp;
+      }
+
+      const elapsed = timestamp - lastTimestampRef.current;
+
+      if (elapsed >= charDelayRef.current && bufferRef.current.length > 0) {
+        setIsTyping(true);
+        const char = bufferRef.current.shift()!;
+        setDisplayedText(prev => prev + char);
+        lastTimestampRef.current = timestamp;
+      }
+
+      if (bufferRef.current.length > 0) {
+        rafRef.current = requestAnimationFrame(animate);
+      } else {
+        setIsTyping(false);
+        isActiveRef.current = false;
+        rafRef.current = null;
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
   }, []);
 
   useEffect(() => {
-    // 检测是否需要重置（新消息开始：源文本变短）
     const needsReset = sourceText.length < prevSourceTextRef.current.length;
     prevSourceTextRef.current = sourceText;
 
-    // 源文本为空时使用 setTimeout 避免同步 setState
     if (!sourceText) {
       const resetTimer = setTimeout(() => {
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
+        stopAnimation();
         bufferRef.current = [];
         lastTextRef.current = '';
+        lastTimestampRef.current = 0;
         setIsTyping(false);
         setDisplayedText('');
       }, 0);
       return () => clearTimeout(resetTimer);
     }
 
-    // 如果需要重置（新消息开始）- 使用 setTimeout 避免同步 setState
     if (needsReset && lastTextRef.current) {
       const resetTimer = setTimeout(() => {
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
+        stopAnimation();
         bufferRef.current = [];
         lastTextRef.current = sourceText;
+        lastTimestampRef.current = 0;
         setDisplayedText('');
         
-        // 将所有字符添加到缓冲区并开始打字
         for (const char of sourceText) {
           bufferRef.current.push(char);
         }
         
-        const typeNextChar = () => {
-          if (bufferRef.current.length > 0) {
-            setIsTyping(true);
-            const char = bufferRef.current.shift()!;
-            setDisplayedText(prev => prev + char);
-            timerRef.current = setTimeout(typeNextChar, charDelayRef.current);
-          } else {
-            setIsTyping(false);
-            timerRef.current = null;
-          }
-        };
-        
-        timerRef.current = setTimeout(typeNextChar, 0);
+        startAnimation();
       }, 0);
       return () => clearTimeout(resetTimer);
     }
 
-    // 计算新增的字符
     const newChars = sourceText.slice(lastTextRef.current.length);
     lastTextRef.current = sourceText;
 
     if (!newChars) return;
 
-    // 将新字符添加到缓冲区
     for (const char of newChars) {
       bufferRef.current.push(char);
     }
 
-    // 启动打字定时器
-    const typeNextChar = () => {
-      if (bufferRef.current.length > 0) {
-        setIsTyping(true);
-        const char = bufferRef.current.shift()!;
-        setDisplayedText(prev => prev + char);
-        timerRef.current = setTimeout(typeNextChar, charDelayRef.current);
-      } else {
-        setIsTyping(false);
-        timerRef.current = null;
-      }
-    };
-
-    if (!timerRef.current) {
-      timerRef.current = setTimeout(typeNextChar, 0);
-    }
+    startAnimation();
 
     return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
+      stopAnimation();
     };
-  }, [sourceText]);
+  }, [sourceText, startAnimation, stopAnimation]);
+
+  useEffect(() => {
+    return () => {
+      stopAnimation();
+    };
+  }, [stopAnimation]);
 
   return {
     displayedText,

@@ -1,4 +1,4 @@
-import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useId, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,6 +68,7 @@ const Subtitles = () => {
   const currentEmotion = useStreamStore((state) => state.currentEmotion);
   const clearHistory = useStreamStore((state) => state.clearHistory);
   const loadHistory = useStreamStore((state) => state.loadHistory);
+  const addToHistory = useStreamStore((state) => state.addToHistory);
   const showSubtitle = useStreamStore((state) => state.showSubtitle);
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
   const setContent = useStreamStore((state) => state.setContent);
@@ -79,6 +80,9 @@ const Subtitles = () => {
   const [autoShow, setAutoShow] = useState(true);
   const [autoClose, setAutoClose] = useState(true);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('');
+  
+  const prevIsStreamingRef = useRef(isStreaming);
+  const prevContentRef = useRef(currentContent);
 
   // 初始化 - 只在组件挂载时执行一次
   useEffect(() => {
@@ -86,6 +90,21 @@ const Subtitles = () => {
     loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 监听流式结束，自动保存历史记录
+  useEffect(() => {
+    if (prevIsStreamingRef.current && !isStreaming && prevContentRef.current && prevContentRef.current.length > 10) {
+      addToHistory({
+        id: `msg_${Date.now()}`,
+        content: prevContentRef.current,
+        speaker: currentSpeaker ?? undefined,
+        emotion: currentEmotion ?? undefined,
+        timestamp: Date.now(),
+      });
+    }
+    prevIsStreamingRef.current = isStreaming;
+    prevContentRef.current = currentContent;
+  }, [isStreaming, currentContent, currentSpeaker, currentEmotion, addToHistory]);
 
   // 同步鼠标穿透到 Tauri 窗口
   useEffect(() => {
@@ -496,14 +515,28 @@ const Subtitles = () => {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                            >
-                              <ScrollText className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
-                              查看历史
-                            </Button>
+                            <Select value={selectedHistoryId} onValueChange={handleHistorySelect}>
+                              <SelectTrigger className="h-7 w-[140px] text-xs">
+                                <ScrollText className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+                                <SelectValue placeholder={history.length > 0 ? `历史(${history.length})` : "暂无历史记录"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {history.length === 0 ? (
+                                  <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
+                                ) : (
+                                  history.map((item, index) => (
+                                    <SelectItem key={item.id} value={item.id}>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground">#{history.length - index}</span>
+                                        <span className="truncate max-w-[120px]">
+                                          {item.content.slice(0, 20)}{item.content.length > 20 ? '...' : ''}
+                                        </span>
+                                      </div>
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
                             <Button
                               variant="ghost"
                               size="sm"

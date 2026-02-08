@@ -245,6 +245,56 @@ export const subtitleWindow = {
     }
     return () => {};
   },
+
+  /**
+   * 发送历史记录同步事件到字幕窗口
+   */
+  async emitHistorySync(history: Array<{ id: string; content: string; speaker?: string; timestamp: number }>): Promise<void> {
+    if (!isTauri()) return;
+    await initTauriApi();
+    if (emitTo) {
+      await emitTo('subtitle', 'subtitle-history-sync', history);
+    }
+  },
+
+  /**
+   * 监听历史记录同步事件
+   */
+  async onHistorySync(handler: (history: Array<{ id: string; content: string; speaker?: string; timestamp: number }>) => void): Promise<() => void> {
+    if (!isTauri()) return () => {};
+    await initTauriApi();
+    if (listen) {
+      return listen('subtitle-history-sync', (event) => {
+        handler(event.payload as Array<{ id: string; content: string; speaker?: string; timestamp: number }>);
+      });
+    }
+    return () => {};
+  },
+
+  /**
+   * 请求历史记录同步（从字幕窗口发送到主窗口）
+   */
+  async requestHistorySync(): Promise<void> {
+    if (!isTauri()) return;
+    await initTauriApi();
+    if (emitTo) {
+      await emitTo('main', 'subtitle-request-history', {});
+    }
+  },
+
+  /**
+   * 监听历史记录请求事件（主窗口监听）
+   */
+  async onHistoryRequest(handler: () => void): Promise<() => void> {
+    if (!isTauri()) return () => {};
+    await initTauriApi();
+    if (listen) {
+      return listen('subtitle-request-history', () => {
+        handler();
+      });
+    }
+    return () => {};
+  },
 };
 
 /**

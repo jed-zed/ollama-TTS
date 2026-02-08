@@ -52,12 +52,6 @@ interface SubtitleConfig {
   charDelay: number;
 }
 
-interface HistoryItem {
-  id: string;
-  content: string;
-  timestamp: number;
-}
-
 const DEFAULT_CONFIG: SubtitleConfig = {
   opacity: 90,
   fontSize: 24,
@@ -86,7 +80,8 @@ const Overlay: React.FC = () => {
   
   const [streamContent, setStreamContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  
+  const [history, setHistory] = useState<Array<{ id: string; content: string; speaker?: string; timestamp: number }>>([]);
 
   const [clickThrough, setClickThrough] = useState(false);
   const [autoClose, setAutoClose] = useState(true);
@@ -182,9 +177,10 @@ const Overlay: React.FC = () => {
       
       if (content.text && !content.isStreaming) {
         setHistory(prev => {
-          const newItem: HistoryItem = {
+          const newItem = {
             id: Date.now().toString(),
             content: content.text,
+            speaker: content.speaker,
             timestamp: Date.now(),
           };
           return [newItem, ...prev].slice(0, 20);
@@ -589,7 +585,7 @@ const Overlay: React.FC = () => {
             
             {/* 当前字幕文本 */}
             <p 
-              className="leading-relaxed font-medium text-center max-w-full whitespace-pre-wrap"
+              className={`leading-relaxed font-medium max-w-full whitespace-pre-wrap ${(isStreaming || isTyping) ? 'text-left' : 'text-center'}`}
               style={{ 
                 fontSize: `${config.fontSize}px`, 
                 color: config.fontColor,

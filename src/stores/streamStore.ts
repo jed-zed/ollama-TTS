@@ -129,10 +129,15 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   },
 
   setSubtitleVisible: (visible) => set({ subtitleVisible: visible }),
-  showSubtitle: () => set({ subtitleVisible: true }),
+  showSubtitle: () => {
+    if (isTauri()) {
+      subtitleWindow.show();
+    }
+    set({ subtitleVisible: true });
+  },
   hideSubtitle: () => {
     if (isTauri()) {
-      subtitleWindow.emitHide();
+      subtitleWindow.hide();
     }
     set({ subtitleVisible: false });
   },

@@ -127,6 +127,8 @@ const FloatingSubtitle: React.FC = () => {
   const subtitleVisible = useSubtitleVisible();
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
   const history = useStreamHistory();
+  const addToHistory = useStreamStore((state) => state.addToHistory);
+  const prevIsStreamingRef = useRef(false);
 
   const configCharDelay = config?.char_delay ?? 30;
   const { displayedText, isTyping, reset: resetTypewriter } = useTypewriter(streamContent, {
@@ -175,7 +177,7 @@ const FloatingSubtitle: React.FC = () => {
     updateConfig('subtitle_font_color', newTheme.fontColor);
   };
 
-  // Tauri 环境下自动打开独立窗口
+  // Tauri 环境下自动打开独立窗口（仅在首次需要显示时创建）
   useEffect(() => {
     if (!isTauri()) return;
     
@@ -194,12 +196,12 @@ const FloatingSubtitle: React.FC = () => {
           }
         }, 500);
       }).catch(console.error);
-    } else if (subtitleVisible && tauriWindowOpenedRef.current) {
-      subtitleWindow.show().catch(console.error);
     }
-  }, [subtitleVisible, config]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtitleVisible]);
 
-  // 隐藏字幕窗口（不关闭，只是隐藏）
+  // 隐藏字幕窗口（不关闭，只是隐藏）- 由 store 的 hideSubtitle 直接处理
+  // 这个 useEffect 作为备用，确保状态同步
   useEffect(() => {
     if (!isTauri()) return;
     
@@ -266,6 +268,18 @@ const FloatingSubtitle: React.FC = () => {
       setSelectedHistoryId(null);
     }
   }, [isStreaming]);
+
+  useEffect(() => {
+    if (prevIsStreamingRef.current && !isStreaming && streamContent && streamContent.length > 10) {
+      addToHistory({
+        id: `msg_${Date.now()}`,
+        content: streamContent,
+        speaker: currentSpeaker ?? undefined,
+        timestamp: Date.now(),
+      });
+    }
+    prevIsStreamingRef.current = isStreaming;
+  }, [isStreaming, streamContent, currentSpeaker, addToHistory]);
 
   useEffect(() => {
     if (position.x !== 0 || position.y !== 0) {
