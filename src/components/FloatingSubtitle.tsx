@@ -135,6 +135,7 @@ const FloatingSubtitle: React.FC = () => {
 
   const [isMinimized, setIsMinimized] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: 100, y: 100 });
   const [size, setSize] = useState({ width: 800, height: 200 });
   const [isDragging, setIsDragging] = useState(false);
@@ -261,6 +262,12 @@ const FloatingSubtitle: React.FC = () => {
   }, [isStreaming, isTyping, streamContent, autoClose, autoCloseDelay, hideSubtitle]);
 
   useEffect(() => {
+    if (isStreaming) {
+      setSelectedHistoryId(null);
+    }
+  }, [isStreaming]);
+
+  useEffect(() => {
     if (position.x !== 0 || position.y !== 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(position));
     }
@@ -361,6 +368,20 @@ const FloatingSubtitle: React.FC = () => {
     updateConfig('subtitle_font_color', '#ffffff');
     updateConfig('subtitle_bg_color', 'rgba(255,255,255,0.1)');
   }, [updateConfig]);
+
+  const selectedHistoryContent = useMemo(() => {
+    if (!selectedHistoryId) return null;
+    return history.find(item => item.id === selectedHistoryId)?.content || null;
+  }, [selectedHistoryId, history]);
+
+  const handleHistoryItemClick = useCallback((id: string) => {
+    setSelectedHistoryId(id);
+    setShowHistory(false);
+  }, []);
+
+  const handleBackToCurrent = useCallback(() => {
+    setSelectedHistoryId(null);
+  }, []);
 
   const containerStyle = useMemo((): CSSProperties => {
     const bgOpacity = opacity / 100;
@@ -590,9 +611,19 @@ const FloatingSubtitle: React.FC = () => {
         {/* 历史记录面板 */}
         {showHistory && history.length > 0 && (
           <div className={`max-h-40 overflow-auto border-b ${theme.toolbarBorder}`}>
-            {history.map((msg) => (
-              <div key={msg.id} className={`px-4 py-2 hover:bg-white/10 cursor-pointer border-b ${theme.toolbarBorder} last:border-b-0`}>
-                <p className="text-sm line-clamp-2 whitespace-pre-wrap" style={{ color: fontColor }}>{msg.content}</p>
+            <div 
+              className={`px-4 py-2 hover:bg-white/10 cursor-pointer border-b ${theme.toolbarBorder} ${!selectedHistoryId ? 'bg-white/20' : ''}`}
+              onClick={handleBackToCurrent}
+            >
+              <p className="text-sm font-medium" style={{ color: fontColor }}>📍 当前内容</p>
+            </div>
+            {history.slice(0, 6).map((msg, index) => (
+              <div 
+                key={msg.id} 
+                className={`px-4 py-2 hover:bg-white/10 cursor-pointer border-b ${theme.toolbarBorder} last:border-b-0 ${selectedHistoryId === msg.id ? 'bg-white/20' : ''}`}
+                onClick={() => handleHistoryItemClick(msg.id)}
+              >
+                <p className="text-sm line-clamp-2 whitespace-pre-wrap" style={{ color: fontColor }}>{index + 1}. {msg.content}</p>
                 <span className="text-xs" style={{ color: fontColor, opacity: 0.5 }}>{msg.speaker || 'AI'}</span>
               </div>
             ))}
@@ -610,16 +641,31 @@ const FloatingSubtitle: React.FC = () => {
           <div className={`absolute bottom-2 left-2 w-1/4 h-1 bg-gradient-to-r from-current to-transparent rounded-full opacity-20`} style={{ color: theme.svgFill }} aria-hidden="true" />
 
           {/* 说话人标识 */}
-          {currentSpeaker && (
+          {currentSpeaker && !selectedHistoryContent && (
             <div className="mb-2">
               <span className={`text-sm font-bold ${theme.textMain}`}>{currentSpeaker}</span>
             </div>
           )}
 
+          {/* 查看历史提示 */}
+          {selectedHistoryContent && (
+            <div className="mb-2 flex items-center gap-2">
+              <span className={`text-xs ${theme.textMain} opacity-70`}>📜 查看历史记录</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className={`h-5 px-2 text-xs ${theme.buttonHoverSoft}`}
+                onClick={handleBackToCurrent}
+              >
+                返回当前
+              </Button>
+            </div>
+          )}
+
           {/* 字幕文本 - 匀速显示 */}
           <p className="leading-relaxed font-medium relative z-10 whitespace-pre-wrap" role="status" style={{ fontSize: `${fontSize}px`, color: fontColor }}>
-            {displayedText || '等待 AI 回复...'}
-            {(isStreaming || isTyping) && (
+            {selectedHistoryContent || displayedText || '等待 AI 回复...'}
+            {!selectedHistoryContent && (isStreaming || isTyping) && (
               <span className={`inline-block w-2 h-5 ml-1 ${theme.progressBar} align-middle animate-pulse`} aria-hidden="true" />
             )}
           </p>

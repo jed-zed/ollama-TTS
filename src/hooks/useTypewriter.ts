@@ -38,6 +38,9 @@ export function useTypewriter(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTextRef = useRef('');
   const prevSourceTextRef = useRef('');
+  const charDelayRef = useRef(charDelay);
+
+  charDelayRef.current = charDelay;
 
   /**
    * 重置所有状态（用于外部调用）
@@ -108,7 +111,7 @@ export function useTypewriter(
             setIsTyping(true);
             const char = bufferRef.current.shift()!;
             setDisplayedText(prev => prev + char);
-            timerRef.current = setTimeout(typeNextChar, charDelay);
+            timerRef.current = setTimeout(typeNextChar, charDelayRef.current);
           } else {
             setIsTyping(false);
             timerRef.current = null;
@@ -137,7 +140,7 @@ export function useTypewriter(
         setIsTyping(true);
         const char = bufferRef.current.shift()!;
         setDisplayedText(prev => prev + char);
-        timerRef.current = setTimeout(typeNextChar, charDelay);
+        timerRef.current = setTimeout(typeNextChar, charDelayRef.current);
       } else {
         setIsTyping(false);
         timerRef.current = null;
@@ -154,7 +157,7 @@ export function useTypewriter(
         timerRef.current = null;
       }
     };
-  }, [sourceText, charDelay]);
+  }, [sourceText]);
 
   return {
     displayedText,

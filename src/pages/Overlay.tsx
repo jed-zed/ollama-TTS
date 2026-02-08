@@ -17,13 +17,14 @@ import React, { useEffect, useState, useMemo, useCallback, useRef, CSSProperties
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { 
   GripHorizontal, X, RotateCcw, MousePointer2, MousePointerClick, 
-  Mic, MicOff, Send, Type, Palette, Clock, Eye, EyeOff, Loader2
+  Mic, MicOff, Send, Type, Palette, Clock, Eye, EyeOff, Loader2, History
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { subtitleWindow, isTauri } from '@/services/tauri';
 import { speechService } from '@/services/speech';
 import { toast } from 'sonner';
@@ -97,9 +98,13 @@ const Overlay: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [speechConfig, setSpeechConfig] = useState<{ apiKey: string; secretKey: string } | null>(null);
   const [isUserSent, setIsUserSent] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  
+  const SCROLL_THRESHOLD = 50;
 
   const { displayedText, isTyping, reset: resetTypewriter } = useTypewriter(streamContent, {
     charDelay: config.charDelay,
@@ -171,6 +176,9 @@ const Overlay: React.FC = () => {
       setStreamContent(content.text);
       setIsStreaming(content.isStreaming);
       setIsUserSent(false);
+      if (content.isStreaming) {
+        setSelectedHistoryId(null);
+      }
       
       if (content.text && !content.isStreaming) {
         setHistory(prev => {
@@ -221,12 +229,24 @@ const Overlay: React.FC = () => {
 
   /**
    * 自动滚动到底部（新内容时）
+   * 仅当用户处于底部附近时才自动滚动，避免打断用户浏览历史
    */
   useEffect(() => {
-    if (scrollRef.current && (isStreaming || displayedText)) {
+    if (scrollRef.current && (isStreaming || displayedText) && isNearBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [displayedText, isStreaming]);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD;
+  }, [SCROLL_THRESHOLD]);
+
+  const selectedHistoryContent = useMemo(() => {
+    if (!selectedHistoryId) return null;
+    return history.find(item => item.id === selectedHistoryId)?.content || null;
+  }, [selectedHistoryId, history]);
 
   /**
    * 背景层样式 - 只用于背景层，内容层不受影响
@@ -429,6 +449,7 @@ const Overlay: React.FC = () => {
           {/* 速度 */}
           <div className="flex items-center gap-1.5">
             <Clock className="w-3 h-3 opacity-70" />
+            <span className="opacity-70">速度</span>
             <Slider 
               value={[config.charDelay]} 
               onValueChange={(v) => setConfig(prev => ({ ...prev, charDelay: v[0] }))} 
@@ -491,6 +512,29 @@ const Overlay: React.FC = () => {
               输出中
             </span>
           )}
+
+          {/* 历史记录选择器 */}
+          {history.length > 0 && (
+            <div className="flex items-center gap-1">
+              <History className="w-3 h-3 opacity-70" />
+              <Select 
+                value={selectedHistoryId || 'current'} 
+                onValueChange={(v) => setSelectedHistoryId(v === 'current' ? null : v)}
+              >
+                <SelectTrigger className="h-6 w-20 text-xs bg-white/10 border-white/20">
+                  <SelectValue placeholder="历史" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current">当前</SelectItem>
+                  {history.slice(0, 6).map((item, index) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {index + 1}. {item.content.slice(0, 10)}...
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         {/* 右侧：操作按钮 */}
@@ -516,6 +560,7 @@ const Overlay: React.FC = () => {
         <div 
           ref={scrollRef}
           className="absolute inset-0 z-10 overflow-y-auto p-6"
+          onScroll={handleScroll}
           style={{ 
             scrollbarWidth: 'thin',
             scrollbarColor: 'rgba(255,255,255,0.3) transparent',
@@ -551,8 +596,8 @@ const Overlay: React.FC = () => {
                 textShadow: '0 2px 4px rgba(0,0,0,0.5)',
               }}
             >
-              {displayedText || '等待内容...'}
-              {(isStreaming || isTyping) && (
+              {selectedHistoryContent || displayedText || '等待内容...'}
+              {!selectedHistoryContent && (isStreaming || isTyping) && (
                 <span className="inline-block w-0.5 ml-1 bg-pink-400 animate-pulse" style={{ height: `${config.fontSize}px` }} />
               )}
             </p>
