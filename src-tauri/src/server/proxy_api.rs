@@ -411,6 +411,7 @@ async fn process_stream_response(
                             let ollama_response = if is_chat {
                                 json!({
                                     "model": model_for_task,
+                                    "created_at": chrono::Utc::now().to_rfc3339(),
                                     "message": {
                                         "role": "assistant",
                                         "content": raw_content
@@ -420,6 +421,7 @@ async fn process_stream_response(
                             } else {
                                 json!({
                                     "model": model_for_task,
+                                    "created_at": chrono::Utc::now().to_rfc3339(),
                                     "response": raw_content,
                                     "done": false
                                 })
@@ -448,6 +450,7 @@ async fn process_stream_response(
         let final_response = if is_chat {
             json!({
                 "model": model_for_task,
+                "created_at": chrono::Utc::now().to_rfc3339(),
                 "message": {
                     "role": "assistant",
                     "content": ""
@@ -457,6 +460,7 @@ async fn process_stream_response(
         } else {
             json!({
                 "model": model_for_task,
+                "created_at": chrono::Utc::now().to_rfc3339(),
                 "response": "",
                 "done": true
             })
@@ -876,9 +880,25 @@ async fn fallback_handler(
         .unwrap()
 }
 
+/// Ollama 健康检查
+///
+/// GET /
+async fn health_check() -> &'static str {
+    "Ollama is running"
+}
+
+/// Ollama 版本信息
+///
+/// GET /api/version
+async fn get_version() -> Json<Value> {
+    Json(json!({ "version": "0.6.2" }))
+}
+
 /// 创建代理路由器
 pub fn create_router(state: ProxyAppState) -> Router {
     Router::new()
+        .route("/", get(health_check))
+        .route("/api/version", get(get_version))
         .route("/api/tags", get(get_tags))
         .route("/api/chat", post(chat))
         .route("/api/generate", post(generate))

@@ -153,6 +153,8 @@ pub struct Config {
     pub custom_font_colors: HashMap<String, String>,
     /// 用户自定义背景颜色预设
     pub custom_bg_colors: HashMap<String, String>,
+    /// 纯文字模式（隐藏控件、边框、装饰，只显示文字）
+    pub subtitle_text_only: bool,
 }
 
 impl Default for Config {
@@ -231,6 +233,7 @@ impl Default for Config {
             subtitle_auto_hide_delay: 3000,
             custom_font_colors: HashMap::new(),
             custom_bg_colors: HashMap::new(),
+            subtitle_text_only: false,
         }
     }
 }

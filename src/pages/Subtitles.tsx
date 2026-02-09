@@ -1,5 +1,5 @@
 import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
-import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History, Save, X } from 'lucide-react';
+import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History, Save, X, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import GalgameSubtitle from '@/components/GalgameSubtitle';
 import ColorPicker from '@/components/ColorPicker';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
@@ -75,6 +77,7 @@ const Subtitles = () => {
   const bgColorId = useId();
   const speedId = useId();
   const autoCloseId = useId();
+  const textOnlyId = useId();
 
   // 从 store 获取状态
   const config = useConfig();
@@ -103,6 +106,11 @@ const Subtitles = () => {
   const [autoShow, setAutoShow] = useState(true);
   const [autoClose, setAutoClose] = useState(true);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('');
+
+  // 保存自定义颜色弹窗状态
+  const [saveColorDialogOpen, setSaveColorDialogOpen] = useState(false);
+  const [saveColorName, setSaveColorName] = useState('');
+  const [saveColorType, setSaveColorType] = useState<'font' | 'bg'>('font');
 
   // 初始化 - 只在组件挂载时执行一次
   useEffect(() => {
@@ -185,21 +193,31 @@ const Subtitles = () => {
     updateConfig('subtitle_bg_color', color);
   }, [updateConfig]);
 
-  const handleSaveFontColorPreset = useCallback(() => {
-    const color = config?.subtitle_font_color;
-    if (!color) return;
-    const key = `custom_${color.replace('#', '')}`;
-    const newCustomColors = { ...(config?.custom_font_colors || {}), [key]: color };
-    updateConfigBatch({ custom_font_colors: newCustomColors });
-  }, [config?.subtitle_font_color, config?.custom_font_colors, updateConfigBatch]);
+  const openSaveColorDialog = useCallback((type: 'font' | 'bg') => {
+    setSaveColorType(type);
+    setSaveColorName('');
+    setSaveColorDialogOpen(true);
+  }, []);
 
-  const handleSaveBgColorPreset = useCallback(() => {
-    const color = config?.subtitle_bg_color;
-    if (!color) return;
-    const key = `custom_${color.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const newCustomColors = { ...(config?.custom_bg_colors || {}), [key]: color };
-    updateConfigBatch({ custom_bg_colors: newCustomColors });
-  }, [config?.subtitle_bg_color, config?.custom_bg_colors, updateConfigBatch]);
+  const handleConfirmSaveColor = useCallback(() => {
+    const name = saveColorName.trim();
+    if (!name) return;
+
+    if (saveColorType === 'font') {
+      const color = config?.subtitle_font_color;
+      if (!color) return;
+      const newCustomColors = { ...(config?.custom_font_colors || {}), [name]: color };
+      updateConfigBatch({ custom_font_colors: newCustomColors });
+    } else {
+      const color = config?.subtitle_bg_color;
+      if (!color) return;
+      const newCustomColors = { ...(config?.custom_bg_colors || {}), [name]: color };
+      updateConfigBatch({ custom_bg_colors: newCustomColors });
+    }
+
+    setSaveColorDialogOpen(false);
+    setSaveColorName('');
+  }, [saveColorName, saveColorType, config?.subtitle_font_color, config?.subtitle_bg_color, config?.custom_font_colors, config?.custom_bg_colors, updateConfigBatch]);
 
   const handleDeleteFontColorPreset = useCallback((key: string) => {
     const customColors = { ...(config?.custom_font_colors || {}) };
@@ -380,12 +398,17 @@ const Subtitles = () => {
                             <SelectItem key={key} value={key}>
                               <span className="flex items-center gap-2">
                                 <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
-                                {color}
+                                {key}
                               </span>
                             </SelectItem>
                           ))}
                           {selectedFontColor === 'custom' && (
-                            <SelectItem value="custom">🎨 自定义</SelectItem>
+                            <SelectItem value="custom" disabled>
+                              <span className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_font_color || '#ffffff' }} />
+                                自定义颜色
+                              </span>
+                            </SelectItem>
                           )}
                         </SelectContent>
                       </Select>
@@ -393,17 +416,15 @@ const Subtitles = () => {
                         value={config?.subtitle_font_color || '#ffffff'}
                         onChange={handleCustomFontColor}
                       />
-                      {selectedFontColor === 'custom' && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0"
-                          onClick={handleSaveFontColorPreset}
-                          title="保存为预设"
-                        >
-                          <Save className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0"
+                        onClick={() => openSaveColorDialog('font')}
+                        title="保存为预设"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
                       {selectedFontColor in (config?.custom_font_colors || {}) && (
                         <Button
                           variant="ghost"
@@ -437,12 +458,17 @@ const Subtitles = () => {
                             <SelectItem key={key} value={key}>
                               <span className="flex items-center gap-2">
                                 <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
-                                {color}
+                                {key}
                               </span>
                             </SelectItem>
                           ))}
                           {selectedBgColor === 'custom' && (
-                            <SelectItem value="custom">🎨 自定义</SelectItem>
+                            <SelectItem value="custom" disabled>
+                              <span className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_bg_color || '#000000' }} />
+                                自定义颜色
+                              </span>
+                            </SelectItem>
                           )}
                         </SelectContent>
                       </Select>
@@ -450,17 +476,15 @@ const Subtitles = () => {
                         value={config?.subtitle_bg_color || '#000000'}
                         onChange={handleCustomBgColor}
                       />
-                      {selectedBgColor === 'custom' && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0"
-                          onClick={handleSaveBgColorPreset}
-                          title="保存为预设"
-                        >
-                          <Save className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0"
+                        onClick={() => openSaveColorDialog('bg')}
+                        title="保存为预设"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
                       {selectedBgColor in (config?.custom_bg_colors || {}) && (
                         <Button
                           variant="ghost"
@@ -582,6 +606,20 @@ const Subtitles = () => {
                       checked={autoShow}
                       onCheckedChange={setAutoShow}
                       aria-describedby={`${autoShowId}-desc`}
+                    />
+                 </div>
+
+                 {/* 纯文字模式 */}
+                 <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                       <Label htmlFor={textOnlyId} className="text-sm cursor-pointer">纯文字模式</Label>
+                       <p className="text-xs text-muted-foreground" id={`${textOnlyId}-desc`}>隐藏控件、边框和背景，只显示文字</p>
+                    </div>
+                    <Switch
+                      id={textOnlyId}
+                      checked={config?.subtitle_text_only ?? false}
+                      onCheckedChange={(checked) => updateConfig('subtitle_text_only', checked)}
+                      aria-describedby={`${textOnlyId}-desc`}
                     />
                  </div>
               </CardContent>
@@ -729,6 +767,45 @@ const Subtitles = () => {
             </Card>
         </div>
       </div>
+
+      <Dialog open={saveColorDialogOpen} onOpenChange={setSaveColorDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>保存自定义颜色</DialogTitle>
+            <DialogDescription>
+              为当前{saveColorType === 'font' ? '字体' : '背景'}颜色命名，保存到预设库中。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-4 py-2">
+            <span
+              className="w-10 h-10 rounded-lg border-2 border-border shadow-sm shrink-0"
+              style={{
+                backgroundColor: saveColorType === 'font'
+                  ? config?.subtitle_font_color || '#ffffff'
+                  : config?.subtitle_bg_color || '#000000',
+              }}
+            />
+            <Input
+              value={saveColorName}
+              onChange={(e) => setSaveColorName(e.target.value)}
+              placeholder="输入颜色名称，如：樱花粉"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirmSaveColor();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveColorDialogOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleConfirmSaveColor} disabled={!saveColorName.trim()}>
+              <Save className="w-4 h-4 mr-2" />
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

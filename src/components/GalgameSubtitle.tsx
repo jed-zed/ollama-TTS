@@ -54,6 +54,7 @@ const GalgameSubtitle = ({
   const fontSize = config?.subtitle_font_size ?? 18;
   const fontColor = config?.subtitle_font_color ?? '#ffffff';
   const bgColor = config?.subtitle_bg_color ?? 'rgba(255,255,255,0.1)';
+  const textOnly = config?.subtitle_text_only ?? false;
 
   const isShowingHistory = !!selectedHistoryContent;
   const rawStreamText = text || streamContent || "哈......你这家伙，真是有意思呢。竟然能找到这里来，看来我也不能小看你了。";
@@ -67,6 +68,19 @@ const GalgameSubtitle = ({
   const displayText = isShowingHistory ? selectedHistoryContent : typedText;
 
   const subtitleStyle = useMemo((): CSSProperties => {
+    if (textOnly) {
+      return {
+        fontSize: `${fontSize}px`,
+        backgroundColor: 'transparent',
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
+        border: 'none',
+        borderWidth: 0,
+        boxShadow: 'none',
+        outline: 'none',
+      };
+    }
+
     const bgOpacity = opacity / 100;
     const isGradient = bgColor.startsWith('linear-gradient');
     
@@ -99,7 +113,7 @@ const GalgameSubtitle = ({
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
     };
-  }, [opacity, fontSize, bgColor]);
+  }, [textOnly, opacity, fontSize, bgColor]);
 
   const handleOpacityChange = (value: number[]) => {
     updateConfig('subtitle_opacity', value[0] / 100);
@@ -144,10 +158,11 @@ const GalgameSubtitle = ({
       `}
     >
       <div 
-        className="relative border-2 border-pink-200 rounded-2xl shadow-2xl overflow-hidden"
+        className={textOnly ? 'relative' : 'relative rounded-2xl overflow-hidden border-2 border-pink-200 shadow-2xl'}
         style={subtitleStyle}
       >
 
+        {!textOnly && (
         <div
           className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-pink-50 to-white border-b border-pink-100 cursor-move"
           role="toolbar"
@@ -249,8 +264,11 @@ const GalgameSubtitle = ({
             </Button>
           </div>
         </div>
+        )}
 
         <div className="relative p-6 min-h-[100px]">
+          {!textOnly && (
+          <>
           <div className="absolute top-0 right-0 p-4 opacity-10" aria-hidden="true">
             <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M50 0C50 0 50 50 100 50C50 50 50 100 50 100C50 100 50 50 0 50C50 50 50 0 50 0Z" fill="#EC4899"/>
@@ -258,6 +276,8 @@ const GalgameSubtitle = ({
           </div>
 
           <div className="absolute bottom-2 left-2 w-1/4 h-1 bg-gradient-to-r from-pink-200 to-transparent rounded-full" aria-hidden="true" />
+          </>
+          )}
 
           {isShowingHistory && (
             <div className="mb-2 flex items-center gap-2">
@@ -268,7 +288,11 @@ const GalgameSubtitle = ({
           <p
             className="leading-relaxed font-medium relative z-10"
             role="status"
-            style={{ fontSize: `${fontSize}px`, color: fontColor }}
+            style={{
+              fontSize: `${fontSize}px`,
+              color: fontColor,
+              ...(textOnly ? { textShadow: '0 2px 4px rgba(0,0,0,0.5)' } : {}),
+            }}
           >
             {displayText}
             {!isShowingHistory && (isStreaming || isTyping) && (
@@ -279,14 +303,19 @@ const GalgameSubtitle = ({
             )}
           </p>
 
+          {!textOnly && (
+          <>
           <div className="absolute bottom-4 right-6" aria-hidden="true">
             <span className="text-pink-300 text-lg motion-safe:animate-pulse">✦</span>
           </div>
           <div className="absolute bottom-8 right-10" aria-hidden="true">
             <span className="text-pink-200 text-sm">✦</span>
           </div>
+          </>
+          )}
         </div>
 
+        {!textOnly && (
         <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-white to-pink-50 border-t border-pink-100">
           <span className="text-pink-400 text-sm" aria-hidden="true">✏️</span>
           <Label htmlFor={inputId} className="sr-only">输入测试字幕</Label>
@@ -317,10 +346,15 @@ const GalgameSubtitle = ({
             </svg>
           </div>
         </div>
+        )}
       </div>
 
+      {!textOnly && (
+      <>
       <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-pink-400 rounded-bl-lg" aria-hidden="true" />
       <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-pink-400 rounded-tr-lg" aria-hidden="true" />
+      </>
+      )}
     </figure>
   );
 };

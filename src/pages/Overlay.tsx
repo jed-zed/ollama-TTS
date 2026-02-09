@@ -51,6 +51,7 @@ interface SubtitleConfig {
   fontColor: string;
   bgColor: string;
   charDelay: number;
+  textOnly: boolean;
 }
 
 const DEFAULT_CONFIG: SubtitleConfig = {
@@ -59,6 +60,7 @@ const DEFAULT_CONFIG: SubtitleConfig = {
   fontColor: '#ec4899',
   bgColor: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
   charDelay: 30,
+  textOnly: false,
 };
 
 const FONT_COLORS = [
@@ -165,6 +167,9 @@ const Overlay: React.FC = () => {
         charDelay: typeof newConfig.char_delay === 'number' 
           ? newConfig.char_delay 
           : prev.charDelay,
+        textOnly: typeof newConfig.subtitle_text_only === 'boolean'
+          ? newConfig.subtitle_text_only
+          : prev.textOnly,
       }));
     }).then(unsub => unsubscribers.push(unsub));
 
@@ -250,6 +255,14 @@ const Overlay: React.FC = () => {
    * 支持格式: #ffffff, rgb(r,g,b), rgba(r,g,b,a), linear-gradient(...)
    */
   const bgLayerStyle = useMemo((): CSSProperties => {
+    if (config.textOnly) {
+      return {
+        backgroundColor: 'transparent',
+        backdropFilter: 'none',
+        opacity: 0,
+      };
+    }
+
     const bgOpacity = config.opacity / 100;
     
     if (bgOpacity === 0) {
@@ -314,7 +327,7 @@ const Overlay: React.FC = () => {
       backdropFilter: `blur(${Math.round(bgOpacity * 12)}px)`,
       opacity: bgOpacity,
     };
-  }, [config.opacity, config.bgColor]);
+  }, [config.textOnly, config.opacity, config.bgColor]);
 
   const handleClose = useCallback(async () => {
     if (isTauri()) {
@@ -402,13 +415,10 @@ const Overlay: React.FC = () => {
         background: 'transparent',
       }}
     >
-      {/* 工具栏 - 分层结构 */}
+      {!config.textOnly && (
       <div className="relative" style={{ pointerEvents: 'auto' }}>
-        {/* 背景层 */}
         <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
-        {/* 内容层 */}
         <div className="relative z-10 flex items-center justify-between px-3 py-1.5" style={{ color: config.fontColor }}>
-          {/* 左侧：拖动区域 - 使用 Tauri 2.x startDragging API */}
           <div 
             className="flex items-center gap-2 cursor-move opacity-50"
             onMouseDown={startWindowDrag}
@@ -548,11 +558,13 @@ const Overlay: React.FC = () => {
         </div>
         </div>
       </div>
+      )}
 
       {/* 字幕内容区 - 分层结构 + 滚动功能 */}
       <div className="flex-1 relative min-h-0">
-        {/* 背景层 */}
+        {!config.textOnly && (
         <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
+        )}
         {/* 内容层 - 使用 absolute 填满容器，确保滚动正常工作 */}
         <div 
           ref={scrollRef}
@@ -566,7 +578,7 @@ const Overlay: React.FC = () => {
           {/* 使用 flexbox 实现内容底部对齐 */}
           <div className="min-h-full flex flex-col justify-end">
             {/* 历史字幕 */}
-            {history.length > 0 && (
+            {!config.textOnly && history.length > 0 && (
               <div className="w-full space-y-1 mb-2">
                 {history.slice(0, 10).reverse().map(item => (
                   <p 
@@ -601,7 +613,8 @@ const Overlay: React.FC = () => {
           </div>
         </div>
         
-        {/* 装饰元素 */}
+        {!config.textOnly && (
+        <>
         <div className="absolute top-2 right-4 opacity-10 pointer-events-none z-20">
           <svg width="60" height="60" viewBox="0 0 100 100" fill="none">
             <path d="M50 0C50 0 50 50 100 50C50 50 50 100 50 100C50 100 50 50 0 50C50 50 50 0 50 0Z" fill="#EC4899"/>
@@ -611,13 +624,13 @@ const Overlay: React.FC = () => {
         <div className="absolute bottom-4 right-6 pointer-events-none z-20">
           <span className="text-pink-300/50 text-lg animate-pulse">✦</span>
         </div>
+        </>
+        )}
       </div>
 
-      {/* 输入区 - 分层结构 */}
+      {!config.textOnly && (
       <div className="relative" style={{ pointerEvents: 'auto' }}>
-        {/* 背景层 */}
         <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
-        {/* 内容层 */}
         <div className="relative z-10 flex items-center gap-2 px-3 py-2" style={{ color: config.fontColor }}>
           {/* 麦克风按钮 */}
           <Button
@@ -659,10 +672,14 @@ const Overlay: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
-      {/* 边角装饰 */}
+      {!config.textOnly && (
+      <>
       <div className="absolute -bottom-0.5 -left-0.5 w-3 h-3 border-b-2 border-l-2 border-pink-400/50 rounded-bl-lg pointer-events-none" />
       <div className="absolute -top-0.5 -right-0.5 w-3 h-3 border-t-2 border-r-2 border-pink-400/50 rounded-tr-lg pointer-events-none" />
+      </>
+      )}
       
       {/* Toast 通知 */}
       <Toaster position="top-center" richColors />

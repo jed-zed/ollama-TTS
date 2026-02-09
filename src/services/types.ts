@@ -101,6 +101,9 @@ export interface Config {
   subtitle_opacity: number;
   subtitle_font_size: number;
 
+  // 纯文字模式（隐藏控件、边框、装饰，只显示文字）
+  subtitle_text_only: boolean;
+
   // 用户自定义颜色预设
   custom_font_colors?: Record<string, string>;
   custom_bg_colors?: Record<string, string>;

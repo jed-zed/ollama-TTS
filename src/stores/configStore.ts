@@ -130,6 +130,8 @@ const defaultConfig: Config = {
   subtitle_opacity: 0.8,
   subtitle_font_size: 24,
 
+  subtitle_text_only: false,
+
   custom_font_colors: {},
   custom_bg_colors: {},
 
@@ -183,7 +185,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     saveConfigToStorage(newConfig);
     broadcastConfigUpdate(newConfig);
 
-    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay'];
+    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only'];
     if (subtitleKeys.includes(key as string)) {
       emitConfigToOverlay({ [key]: value });
     }

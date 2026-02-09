@@ -153,6 +153,7 @@ const FloatingSubtitleInner: React.FC = () => {
   const fontSize = config?.subtitle_font_size ?? 18;
   const fontColor = config?.subtitle_font_color ?? '#ffffff';
   const bgColor = config?.subtitle_bg_color ?? 'rgba(255,255,255,0.1)';
+  const textOnly = config?.subtitle_text_only ?? false;
 
   const [currentTheme, setCurrentTheme] = useState<ThemeKey>('classic');
   const theme = THEMES[currentTheme];
@@ -379,6 +380,18 @@ const FloatingSubtitleInner: React.FC = () => {
   }, []);
 
   const containerStyle = useMemo((): CSSProperties => {
+    if (textOnly) {
+      return {
+        backgroundColor: 'transparent',
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
+        border: 'none',
+        borderWidth: 0,
+        boxShadow: 'none',
+        outline: 'none',
+      };
+    }
+
     const bgOpacity = opacity / 100;
     
     // 透明度为 0 时，背景完全透明，仅显示文字
@@ -419,7 +432,7 @@ const FloatingSubtitleInner: React.FC = () => {
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
     };
-  }, [opacity, bgColor]);
+  }, [textOnly, opacity, bgColor]);
 
   const contentStyle = useMemo((): CSSProperties => {
     return {
@@ -445,7 +458,7 @@ const FloatingSubtitleInner: React.FC = () => {
         }}
       >
         <div 
-          className={`border-2 ${theme.containerBorder} rounded-xl shadow-lg px-3 py-2 flex items-center gap-3`}
+          className={textOnly ? 'px-3 py-2 flex items-center gap-3' : `border-2 ${theme.containerBorder} rounded-xl shadow-lg px-3 py-2 flex items-center gap-3`}
           style={containerStyle}
         >
           <div className={`cursor-grab active:cursor-grabbing ${theme.iconMain}`} onMouseDown={handleMouseDown}>
@@ -487,10 +500,10 @@ const FloatingSubtitleInner: React.FC = () => {
       }}
     >
       <div 
-        className={`relative border-2 ${theme.containerBorder} rounded-2xl shadow-2xl overflow-hidden`}
+        className={textOnly ? 'relative' : `relative rounded-2xl overflow-hidden border-2 ${theme.containerBorder} shadow-2xl`}
         style={{ ...containerStyle, pointerEvents: clickThrough ? 'none' : 'auto' }}
       >
-        {/* 工具栏 */}
+        {!textOnly && (
         <div
           className={`flex items-center justify-between px-3 py-2 border-b ${theme.toolbarBorder}`}
           role="toolbar"
@@ -602,9 +615,10 @@ const FloatingSubtitleInner: React.FC = () => {
             </Button>
           </div>
         </div>
+        )}
 
         {/* 历史记录面板 */}
-        {showHistory && history.length > 0 && (
+        {!textOnly && showHistory && history.length > 0 && (
           <div className={`max-h-40 overflow-auto border-b ${theme.toolbarBorder}`}>
             <div 
               className={`px-4 py-2 hover:bg-white/10 cursor-pointer border-b ${theme.toolbarBorder} ${!selectedHistoryId ? 'bg-white/20' : ''}`}
@@ -626,23 +640,24 @@ const FloatingSubtitleInner: React.FC = () => {
         )}
 
         {/* 内容区 */}
-        <div className="relative p-6" style={{ ...contentStyle, minHeight: `${Math.max(100, size.height - 80)}px` }}>
-          {/* 装饰元素 */}
+        <div className="relative p-6" style={{ ...contentStyle, minHeight: `${Math.max(100, size.height - (textOnly ? 20 : 80))}px` }}>
+          {!textOnly && (
+          <>
           <div className="absolute top-0 right-0 p-4 opacity-10" aria-hidden="true">
             <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M50 0C50 0 50 50 100 50C50 50 50 100 50 100C50 100 50 50 0 50C50 50 50 0 50 0Z" fill={theme.svgFill}/>
             </svg>
           </div>
           <div className={`absolute bottom-2 left-2 w-1/4 h-1 bg-gradient-to-r from-current to-transparent rounded-full opacity-20`} style={{ color: theme.svgFill }} aria-hidden="true" />
+          </>
+          )}
 
-          {/* 说话人标识 */}
           {currentSpeaker && !selectedHistoryContent && (
             <div className="mb-2">
               <span className={`text-sm font-bold ${theme.textMain}`}>{currentSpeaker}</span>
             </div>
           )}
 
-          {/* 查看历史提示 */}
           {selectedHistoryContent && (
             <div className="mb-2 flex items-center gap-2">
               <span className={`text-xs ${theme.textMain} opacity-70`}>📜 查看历史记录</span>
@@ -657,24 +672,34 @@ const FloatingSubtitleInner: React.FC = () => {
             </div>
           )}
 
-          {/* 字幕文本 - 匀速显示 */}
-          <p className="leading-relaxed font-medium relative z-10 whitespace-pre-wrap" role="status" style={{ fontSize: `${fontSize}px`, color: fontColor }}>
+          <p
+            className="leading-relaxed font-medium relative z-10 whitespace-pre-wrap"
+            role="status"
+            style={{
+              fontSize: `${fontSize}px`,
+              color: fontColor,
+              ...(textOnly ? { textShadow: '0 2px 4px rgba(0,0,0,0.5)' } : {}),
+            }}
+          >
             {selectedHistoryContent || displayedText || '等待 AI 回复...'}
             {!selectedHistoryContent && (isStreaming || isTyping) && (
               <span className={`inline-block w-2 h-5 ml-1 ${theme.progressBar} align-middle animate-pulse`} aria-hidden="true" />
             )}
           </p>
 
-          {/* 装饰星星 */}
+          {!textOnly && (
+          <>
           <div className="absolute bottom-4 right-6" aria-hidden="true">
             <span className={`${theme.decoration} text-lg animate-pulse`}>✦</span>
           </div>
           <div className="absolute bottom-8 right-10" aria-hidden="true">
             <span className={`${theme.decoration} text-sm opacity-60`}>✦</span>
           </div>
+          </>
+          )}
         </div>
 
-        {/* 调整大小手柄 */}
+        {!textOnly && (
         <div 
           className={`absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end ${theme.resizeHandle}`}
           onMouseDown={handleResizeMouseDown}
@@ -685,11 +710,15 @@ const FloatingSubtitleInner: React.FC = () => {
             <path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
           </svg>
         </div>
+        )}
       </div>
 
-      {/* 边角装饰 */}
+      {!textOnly && (
+      <>
       <div className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 ${theme.decorationCorner} rounded-bl-lg`} aria-hidden="true" />
       <div className={`absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 ${theme.decorationCorner} rounded-tr-lg`} aria-hidden="true" />
+      </>
+      )}
     </figure>
   );
   
