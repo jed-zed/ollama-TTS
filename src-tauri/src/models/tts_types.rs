@@ -198,6 +198,8 @@ pub struct TtsResult {
 /// 流式 TTS 合成的单个段落结果
 #[derive(Debug, Clone)]
 pub struct TtsSegmentAudio {
+    /// 对话唯一标识（区分不同对话的段落）
+    pub dialogue_id: u64,
     /// 段落序号（从 0 开始）
     pub seq: usize,
     /// 总段落数

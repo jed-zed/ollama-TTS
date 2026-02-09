@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './api';
+import { API_BASE_URL } from '@/lib/constants';
 import type {
   ApiResponse,
   StreamMessage,
@@ -66,7 +67,7 @@ export class StreamManager {
   public onMessage?: (event: StreamEvent) => void;
   public onError?: (error: string) => void;
 
-  constructor(baseUrl: string = 'http://localhost:8765') {
+  constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
   }
 

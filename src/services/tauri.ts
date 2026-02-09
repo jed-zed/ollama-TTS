@@ -3,6 +3,8 @@
  * 提供字幕窗口管理、桌面穿透等原生功能
  */
 
+import { API_BASE_URL } from '@/lib/constants';
+
 // 检测是否在 Tauri 环境中运行（同步检测，更可靠）
 export const isTauri = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -147,7 +149,6 @@ export const subtitleWindow = {
     await initTauriApi();
     if (emitTo) {
       await emitTo('subtitle', 'subtitle-config-update', config);
-      console.log('[Tauri] Emitted config update to subtitle window:', config);
     }
   },
 
@@ -159,7 +160,6 @@ export const subtitleWindow = {
     await initTauriApi();
     if (listen) {
       return listen('subtitle-config-update', (event) => {
-        console.log('[Tauri] Received config update:', event.payload);
         handler(event.payload as Record<string, unknown>);
       });
     }
@@ -321,7 +321,7 @@ export const backend = {
    * 获取后端 URL
    */
   async getUrl(): Promise<string> {
-    if (!isTauri() || !invoke) return 'http://localhost:8765';
+    if (!isTauri() || !invoke) return API_BASE_URL;
     return (await invoke('get_backend_url')) as string;
   },
 };

@@ -1,5 +1,5 @@
 import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
-import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History } from 'lucide-react';
+import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History, Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -8,13 +8,14 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import GalgameSubtitle from '@/components/GalgameSubtitle';
+import ColorPicker from '@/components/ColorPicker';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useStreamStore, useStreamHistory, useIsStreaming, useConnectionStatus, useStreamContent } from '@/stores/streamStore';
 import { subtitleWindow, isTauri } from '@/services/tauri';
 import { useTypewriter } from '@/hooks/useTypewriter';
 
-// 颜色映射
-const fontColorMap: Record<string, string> = {
+// 内置颜色预设
+const BUILTIN_FONT_COLORS: Record<string, string> = {
   white: '#ffffff',
   black: '#000000',
   pink: '#ec4899',
@@ -24,7 +25,7 @@ const fontColorMap: Record<string, string> = {
   slate: '#1e293b',
 };
 
-const bgColorMap: Record<string, string> = {
+const BUILTIN_BG_COLORS: Record<string, string> = {
   glass: 'rgba(255,255,255,0.1)',
   white: '#ffffff',
   dark: '#1e1e1e',
@@ -33,6 +34,27 @@ const bgColorMap: Record<string, string> = {
   darkGold: 'rgba(0,0,0,0.8)',
   aurora: 'linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(20, 40, 60, 0.9), rgba(10, 50, 60, 0.85))',
   acrylic: 'rgba(255,255,255,0.85)',
+};
+
+const FONT_COLOR_LABELS: Record<string, string> = {
+  white: '⚪ 白色',
+  black: '⚫ 黑色',
+  pink: '🩷 粉色',
+  yellow: '🟡 黄色',
+  cyan: '🩵 青色',
+  gold: '🟠 金色',
+  slate: '🔵 深蓝灰',
+};
+
+const BG_COLOR_LABELS: Record<string, string> = {
+  glass: '🪟 磨砂玻璃',
+  white: '⚪ 白色',
+  dark: '⚫ 深色',
+  transparent: '🔍 透明',
+  pink: '🩷 粉色渐变',
+  darkGold: '🟤 深邃黑金',
+  aurora: '🌌 科技极光',
+  acrylic: '💎 亚克力白',
 };
 
 const DEFAULT_SUBTITLE_CONFIG = {
@@ -59,6 +81,7 @@ const Subtitles = () => {
   const isLoading = useConfigLoading();
   const loadConfig = useConfigStore((state) => state.loadConfig);
   const updateConfig = useConfigStore((state) => state.updateConfig);
+  const updateConfigBatch = useConfigStore((state) => state.updateConfigBatch);
 
   // Stream store
   const history = useStreamHistory();
@@ -116,32 +139,79 @@ const Subtitles = () => {
   // 最终显示的文本：历史记录直接显示，当前内容使用打字机效果
   const finalDisplayText = selectedHistoryContent || streamTypedText;
 
-  // 从配置派生颜色选择状态 - 使用 useMemo 避免无限循环
+  // 合并内置预设和用户自定义颜色预设
+  const fontColorMap = useMemo(() => ({
+    ...BUILTIN_FONT_COLORS,
+    ...(config?.custom_font_colors || {}),
+  }), [config?.custom_font_colors]);
+
+  const bgColorMap = useMemo(() => ({
+    ...BUILTIN_BG_COLORS,
+    ...(config?.custom_bg_colors || {}),
+  }), [config?.custom_bg_colors]);
+
+  // 从配置派生颜色选择状态
   const selectedFontColor = useMemo(() => {
-    const entry = Object.entries(fontColorMap).find(
-      ([, hex]) => hex === config?.subtitle_font_color
-    );
-    return entry?.[0] ?? 'white';
-  }, [config?.subtitle_font_color]);
+    const color = config?.subtitle_font_color;
+    if (!color) return 'white';
+    const entry = Object.entries(fontColorMap).find(([, hex]) => hex === color);
+    return entry?.[0] ?? 'custom';
+  }, [config?.subtitle_font_color, fontColorMap]);
 
   const selectedBgColor = useMemo(() => {
-    const entry = Object.entries(bgColorMap).find(
-      ([, value]) => value === config?.subtitle_bg_color
-    );
-    return entry?.[0] ?? 'glass';
-  }, [config?.subtitle_bg_color]);
+    const color = config?.subtitle_bg_color;
+    if (!color) return 'glass';
+    const entry = Object.entries(bgColorMap).find(([, value]) => value === color);
+    return entry?.[0] ?? 'custom';
+  }, [config?.subtitle_bg_color, bgColorMap]);
 
-  // 处理字体颜色变化
   const handleFontColorChange = useCallback((value: string) => {
+    if (value === 'custom') return;
     const hexColor = fontColorMap[value] || '#ffffff';
     updateConfig('subtitle_font_color', hexColor);
-  }, [updateConfig]);
+  }, [updateConfig, fontColorMap]);
 
-  // 处理背景颜色变化
   const handleBgColorChange = useCallback((value: string) => {
+    if (value === 'custom') return;
     const bgValue = bgColorMap[value] || 'rgba(255,255,255,0.1)';
     updateConfig('subtitle_bg_color', bgValue);
+  }, [updateConfig, bgColorMap]);
+
+  const handleCustomFontColor = useCallback((color: string) => {
+    updateConfig('subtitle_font_color', color);
   }, [updateConfig]);
+
+  const handleCustomBgColor = useCallback((color: string) => {
+    updateConfig('subtitle_bg_color', color);
+  }, [updateConfig]);
+
+  const handleSaveFontColorPreset = useCallback(() => {
+    const color = config?.subtitle_font_color;
+    if (!color) return;
+    const key = `custom_${color.replace('#', '')}`;
+    const newCustomColors = { ...(config?.custom_font_colors || {}), [key]: color };
+    updateConfigBatch({ custom_font_colors: newCustomColors });
+  }, [config?.subtitle_font_color, config?.custom_font_colors, updateConfigBatch]);
+
+  const handleSaveBgColorPreset = useCallback(() => {
+    const color = config?.subtitle_bg_color;
+    if (!color) return;
+    const key = `custom_${color.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const newCustomColors = { ...(config?.custom_bg_colors || {}), [key]: color };
+    updateConfigBatch({ custom_bg_colors: newCustomColors });
+  }, [config?.subtitle_bg_color, config?.custom_bg_colors, updateConfigBatch]);
+
+  const handleDeleteFontColorPreset = useCallback((key: string) => {
+    const customColors = { ...(config?.custom_font_colors || {}) };
+    delete customColors[key];
+    updateConfigBatch({ custom_font_colors: customColors });
+  }, [config?.custom_font_colors, updateConfigBatch]);
+
+  const handleDeleteBgColorPreset = useCallback((key: string) => {
+    const customColors = { ...(config?.custom_bg_colors || {}) };
+    delete customColors[key];
+    updateConfigBatch({ custom_bg_colors: customColors });
+  }, [config?.custom_bg_colors, updateConfigBatch]);
 
   // 处理不透明度变化
   const handleOpacityChange = useCallback((value: number[]) => {
@@ -297,20 +367,55 @@ const Subtitles = () => {
                       <Type className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
                       字体颜色
                     </Label>
-                    <Select value={selectedFontColor} onValueChange={handleFontColorChange}>
-                      <SelectTrigger id={fontColorId}>
-                        <SelectValue placeholder="选择颜色" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="white">⚪ 白色</SelectItem>
-                        <SelectItem value="black">⚫ 黑色</SelectItem>
-                        <SelectItem value="pink">🩷 粉色</SelectItem>
-                        <SelectItem value="yellow">🟡 黄色</SelectItem>
-                        <SelectItem value="cyan">🩵 青色</SelectItem>
-                        <SelectItem value="gold">🟠 金色</SelectItem>
-                        <SelectItem value="slate">🔵 深蓝灰</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center gap-2">
+                      <Select value={selectedFontColor} onValueChange={handleFontColorChange}>
+                        <SelectTrigger id={fontColorId} className="flex-1">
+                          <SelectValue placeholder="选择颜色" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(BUILTIN_FONT_COLORS).map(([key]) => (
+                            <SelectItem key={key} value={key}>{FONT_COLOR_LABELS[key] || key}</SelectItem>
+                          ))}
+                          {Object.entries(config?.custom_font_colors || {}).map(([key, color]) => (
+                            <SelectItem key={key} value={key}>
+                              <span className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
+                                {color}
+                              </span>
+                            </SelectItem>
+                          ))}
+                          {selectedFontColor === 'custom' && (
+                            <SelectItem value="custom">🎨 自定义</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <ColorPicker
+                        value={config?.subtitle_font_color || '#ffffff'}
+                        onChange={handleCustomFontColor}
+                      />
+                      {selectedFontColor === 'custom' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          onClick={handleSaveFontColorPreset}
+                          title="保存为预设"
+                        >
+                          <Save className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {selectedFontColor in (config?.custom_font_colors || {}) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => handleDeleteFontColorPreset(selectedFontColor)}
+                          title="删除此预设"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                  </div>
 
                  {/* 背景颜色 */}
@@ -319,21 +424,55 @@ const Subtitles = () => {
                       <Palette className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
                       背景颜色
                     </Label>
-                    <Select value={selectedBgColor} onValueChange={handleBgColorChange}>
-                      <SelectTrigger id={bgColorId}>
-                        <SelectValue placeholder="选择颜色" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="glass">🪟 磨砂玻璃</SelectItem>
-                        <SelectItem value="white">⚪ 白色</SelectItem>
-                        <SelectItem value="dark">⚫ 深色</SelectItem>
-                        <SelectItem value="transparent">🔍 透明</SelectItem>
-                        <SelectItem value="pink">🩷 粉色渐变</SelectItem>
-                        <SelectItem value="darkGold">🟤 深邃黑金</SelectItem>
-                        <SelectItem value="aurora">🌌 科技极光</SelectItem>
-                        <SelectItem value="acrylic">💎 亚克力白</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center gap-2">
+                      <Select value={selectedBgColor} onValueChange={handleBgColorChange}>
+                        <SelectTrigger id={bgColorId} className="flex-1">
+                          <SelectValue placeholder="选择颜色" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(BUILTIN_BG_COLORS).map(([key]) => (
+                            <SelectItem key={key} value={key}>{BG_COLOR_LABELS[key] || key}</SelectItem>
+                          ))}
+                          {Object.entries(config?.custom_bg_colors || {}).map(([key, color]) => (
+                            <SelectItem key={key} value={key}>
+                              <span className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
+                                {color}
+                              </span>
+                            </SelectItem>
+                          ))}
+                          {selectedBgColor === 'custom' && (
+                            <SelectItem value="custom">🎨 自定义</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <ColorPicker
+                        value={config?.subtitle_bg_color || '#000000'}
+                        onChange={handleCustomBgColor}
+                      />
+                      {selectedBgColor === 'custom' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          onClick={handleSaveBgColorPreset}
+                          title="保存为预设"
+                        >
+                          <Save className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {selectedBgColor in (config?.custom_bg_colors || {}) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => handleDeleteBgColorPreset(selectedBgColor)}
+                          title="删除此预设"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                  </div>
 
                  {/* 不透明度 */}

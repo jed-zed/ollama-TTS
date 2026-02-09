@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Save, FolderOpen, RefreshCw, FileText, Database, AlertTriangle, Play, History, RotateCcw, Loader2, Check, User } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Save, FolderOpen, RefreshCw, FileText, Database, AlertTriangle, Play, RotateCcw, Loader2, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';

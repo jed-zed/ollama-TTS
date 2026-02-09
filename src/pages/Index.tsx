@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Network,
   Copy,
@@ -29,6 +29,7 @@ import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStor
 import { useStreamStore, useStreamHistory, useIsStreaming, useStreamContent, useConnectionStatus } from '@/stores/streamStore';
 import { streamChat } from '@/services/stream';
 import { checkBackendHealth } from '@/services/api';
+import { HEALTH_CHECK_INTERVAL_MS } from '@/lib/constants';
 import type { ChatMessage } from '@/services/types';
 
 /**
@@ -67,7 +68,7 @@ const Index = () => {
       setBackendConnected(result.connected);
     };
     checkHealth();
-    const healthInterval = setInterval(checkHealth, 10000);
+    const healthInterval = setInterval(checkHealth, HEALTH_CHECK_INTERVAL_MS);
 
     return () => {
       clearInterval(healthInterval);

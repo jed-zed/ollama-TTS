@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import type { StreamMessage, StreamEvent, ConnectionStatus } from '../services/types';
 import * as streamService from '../services/stream';
 import { subtitleWindow, isTauri } from '../services/tauri';
+import { MAX_HISTORY_SIZE, MIN_CONTENT_LENGTH } from '@/lib/constants';
 
 const HISTORY_STORAGE_KEY = 'stream-history';
 
@@ -21,7 +22,7 @@ const loadHistoryFromStorage = (): StreamMessage[] => {
 
 const saveHistoryToStorage = (history: StreamMessage[]) => {
   try {
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(-20)));
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(-MAX_HISTORY_SIZE)));
   } catch {
   }
 };
@@ -130,7 +131,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   finishStream: () => {
     const state = get();
-    if (state.currentContent && state.currentContent.length > 10) {
+    if (state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
       const message: StreamMessage = {
         id: `msg_${Date.now()}`,
         content: state.currentContent,
@@ -140,7 +141,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       };
       emitContentToOverlay(state.currentContent, state.currentSpeaker, false);
       set((s) => {
-        const newHistory = [...s.history, message].slice(-20);
+        const newHistory = [...s.history, message].slice(-MAX_HISTORY_SIZE);
         saveHistoryToStorage(newHistory);
         return {
           history: newHistory,
@@ -168,7 +169,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   addToHistory: (message) =>
     set((state) => {
-      const newHistory = [...state.history, message].slice(-20);
+      const newHistory = [...state.history, message].slice(-MAX_HISTORY_SIZE);
       saveHistoryToStorage(newHistory);
       return { history: newHistory };
     }),
@@ -206,7 +207,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         if (isTauri()) {
           subtitleWindow.show();
         }
-        if (state.currentContent && state.currentContent.length > 10) {
+        if (state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
           const message: StreamMessage = {
             id: `msg_${Date.now()}`,
             content: state.currentContent,
@@ -215,7 +216,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             timestamp: Date.now(),
           };
           set((s) => {
-            const newHistory = [...s.history, message].slice(-20);
+            const newHistory = [...s.history, message].slice(-MAX_HISTORY_SIZE);
             saveHistoryToStorage(newHistory);
             return {
               history: newHistory,

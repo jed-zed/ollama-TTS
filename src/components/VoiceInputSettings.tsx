@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Mic, CheckCircle2, AlertTriangle, Globe, Square, Loader2, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useConfig, useConfigStore } from '@/stores/configStore';
+import { API_BASE_URL } from '@/lib/constants';
 import { toast } from 'sonner';
 import { speechService } from '@/services/speech';
 
@@ -120,7 +121,7 @@ const VoiceInputSettings = () => {
     setTestMessage('正在通过后端代理连接百度鉴权接口...');
 
     try {
-      const response = await fetch('http://localhost:8765/api/speech/baidu/test', {
+      const response = await fetch(`${API_BASE_URL}/api/speech/baidu/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

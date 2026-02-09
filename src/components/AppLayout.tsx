@@ -22,7 +22,6 @@ const AppLayout = () => {
     let unsubscribe: (() => void) | null = null;
     
     subtitleWindow.onUserHide(() => {
-      console.log('[AppLayout] Received subtitle-user-hide event');
       hideSubtitle();
     }).then((unsub) => {
       unsubscribe = unsub;

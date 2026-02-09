@@ -11,6 +11,7 @@ import { shallow } from 'zustand/shallow';
 import type { Config, GSVCharacter } from '../services/types';
 import * as configService from '../services/config';
 import { subtitleWindow, isTauri } from '../services/tauri';
+import { OLLAMA_DEFAULT_URL, GSV_DEFAULT_TTS_URL, CONFIG_DEBOUNCE_MS } from '@/lib/constants';
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingUpdates: Map<string, unknown> = new Map();
@@ -83,7 +84,7 @@ interface ConfigState {
 
 // 默认配置
 const defaultConfig: Config = {
-  api_url: 'http://localhost:11434',
+  api_url: OLLAMA_DEFAULT_URL,
   api_key: '',
   model_name: 'qwen2.5:7b',
   current_api_preset: 'local',
@@ -97,6 +98,9 @@ const defaultConfig: Config = {
   // 按预设独立存储的 API 配置
   preset_configs: {},
 
+  // 用户自定义预设元数据
+  user_presets: {},
+
   tts_enabled: true,
   tts_engine: 'gpt_sovits',
   tts_auto_play: true,
@@ -104,7 +108,7 @@ const defaultConfig: Config = {
   tts_volume: 0.8,
   tts_play_mode: 'dialogue',
 
-  gsv_api_url: 'http://localhost:9880/tts',
+  gsv_api_url: GSV_DEFAULT_TTS_URL,
   gsv_current_character: '',
   gsv_characters: {},
   gsv_use_server_path: false,
@@ -125,6 +129,9 @@ const defaultConfig: Config = {
   subtitle_bg_color: 'rgba(255,255,255,0.1)',
   subtitle_opacity: 0.8,
   subtitle_font_size: 24,
+
+  custom_font_colors: {},
+  custom_bg_colors: {},
 
   history_compression: {
     save_data_path: '',
@@ -198,7 +205,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       if (!response.success) {
         set({ error: response.error });
       }
-    }, 300);
+    }, CONFIG_DEBOUNCE_MS);
   },
 
   updateConfigBatch: async (updates) => {

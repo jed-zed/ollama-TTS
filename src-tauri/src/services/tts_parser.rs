@@ -416,6 +416,101 @@ impl StreamingTTSParser {
         }
     }
     
+    fn find_matching_segment(&mut self, dialogue_text: &str) -> Option<TtsSegment> {
+        for (marker, seg) in &self.segments_map {
+            if dialogue_text.starts_with(marker) || dialogue_text.contains(marker) {
+                let result = seg.clone();
+                let marker_clone = marker.clone();
+                info!("   ✅ text_marker 匹配成功: \"{}\"", marker);
+                self.segments_map.remove(&marker_clone);
+                return Some(result);
+            }
+        }
+
+        for (marker, seg) in &self.segments_map {
+            let min_len = marker.len().min(dialogue_text.len()).min(5);
+            if min_len >= 3 {
+                let marker_prefix: String = marker.chars().take(min_len).collect();
+                let text_prefix: String = dialogue_text.chars().take(min_len).collect();
+                if marker_prefix == text_prefix {
+                    let result = seg.clone();
+                    let marker_clone = marker.clone();
+                    self.segments_map.remove(&marker_clone);
+                    return Some(result);
+                }
+            }
+        }
+
+        if let Some(default) = &self.default_segment {
+            info!("   ✅ 使用默认 segment（单一 speaker 模式）");
+            return Some(default.clone());
+        }
+
+        if self.current_segment_index < self.segments_list.len() {
+            let seg = self.segments_list[self.current_segment_index].clone();
+            self.current_segment_index += 1;
+            info!("   ✅ 顺序匹配: 使用 segments_list[{}], speaker={:?}, gender={:?}",
+                  self.current_segment_index - 1, seg.speaker, seg.gender);
+            return Some(seg);
+        }
+
+        if !self.current_speaker.is_empty() {
+            let speaker = self.current_speaker.clone();
+            let mut found_marker = None;
+            let mut result = None;
+            for (marker, seg) in &self.segments_map {
+                if seg.speaker.as_ref().map(|s| s == &speaker).unwrap_or(false) {
+                    result = Some(seg.clone());
+                    found_marker = Some(marker.clone());
+                    info!("   ✅ 回退匹配: 使用同角色({})的下一个 segment", speaker);
+                    break;
+                }
+            }
+            if let Some(marker) = found_marker {
+                self.segments_map.remove(&marker);
+            }
+            if result.is_some() {
+                return result;
+            }
+
+            if let Some(seg) = self.last_used_segment_by_speaker.get(&self.current_speaker) {
+                info!("   ✅ 回退匹配: 使用{}的上一个 segment（容错）", self.current_speaker);
+                return Some(seg.clone());
+            }
+        }
+
+        None
+    }
+
+    fn log_matched_segment(matched: &TtsSegment) {
+        info!("   🎭 情感参数识别结果:");
+        info!("      gender: {}", matched.gender.as_ref().map(|g| g.as_str()).unwrap_or("(未设置)"));
+        info!("      emotion: {}", matched.emotion.as_ref().map(|e| e.as_str()).unwrap_or("(未设置)"));
+        if let Some(ref vec) = matched.emotion_vector {
+            let vec_parts: Vec<String> = vec.iter()
+                .filter(|(_, v)| **v > 0.0)
+                .map(|(k, v)| format!("{}={:.2}", k, v))
+                .collect();
+            if !vec_parts.is_empty() {
+                info!("      emotion_vector: {}", vec_parts.join(", "));
+            } else {
+                info!("      emotion_vector: (全零或空)");
+            }
+        } else {
+            info!("      emotion_vector: (未设置)");
+        }
+        if let Some(ref desc) = matched.emotion_description {
+            if !desc.is_empty() {
+                info!("      emotion_description: {}", desc);
+            }
+        }
+        if let Some(speed) = matched.speed {
+            if (speed - 1.0).abs() > 0.01 {
+                info!("      speed: {:.2}", speed);
+            }
+        }
+    }
+
     /// 发送检测到的对话
     fn emit_dialogue(&mut self) {
         let dialogue_text = self.dialogue_buffer.trim().to_string();
@@ -431,119 +526,16 @@ impl StreamingTTSParser {
             }
         }
         
-        // 查找匹配的 segment（通过 text_marker）
-        let mut matched_segment: Option<TtsSegment> = None;
-        let mut matched_marker: Option<String> = None;
+        let matched_segment = self.find_matching_segment(&dialogue_text);
         
-        for (marker, seg) in &self.segments_map {
-            // text_marker 是对话的开头部分
-            if dialogue_text.starts_with(marker) || dialogue_text.contains(marker) {
-                matched_segment = Some(seg.clone());
-                matched_marker = Some(marker.clone());
-                info!("   ✅ text_marker 匹配成功: \"{}\"", marker);
-                break;
-            }
-        }
-        
-        // 更宽松的匹配（前几个字）
-        if matched_segment.is_none() {
-            for (marker, seg) in &self.segments_map {
-                let min_len = marker.len().min(dialogue_text.len()).min(5);
-                if min_len >= 3 {
-                    let marker_prefix: String = marker.chars().take(min_len).collect();
-                    let text_prefix: String = dialogue_text.chars().take(min_len).collect();
-                    if marker_prefix == text_prefix {
-                        matched_segment = Some(seg.clone());
-                        matched_marker = Some(marker.clone());
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // 移除已使用的 segment
-        if let Some(marker) = &matched_marker {
-            self.segments_map.remove(marker);
-        }
-        
-        // 使用默认配置（单一 speaker 模式）
-        if matched_segment.is_none() {
-            if let Some(default) = &self.default_segment {
-                matched_segment = Some(default.clone());
-                info!("   ✅ 使用默认 segment（单一 speaker 模式）");
-            }
-        }
-        
-        // 顺序匹配：使用 segments_list 中的下一个 segment
-        if matched_segment.is_none() && self.current_segment_index < self.segments_list.len() {
-            let seg = self.segments_list[self.current_segment_index].clone();
-            self.current_segment_index += 1;
-            info!("   ✅ 顺序匹配: 使用 segments_list[{}], speaker={:?}, gender={:?}", 
-                  self.current_segment_index - 1, seg.speaker, seg.gender);
-            matched_segment = Some(seg);
-        }
-        
-        // 回退到同角色的下一个 segment
-        if matched_segment.is_none() && !self.current_speaker.is_empty() {
-            let speaker = self.current_speaker.clone();
-            let mut found_marker = None;
-            for (marker, seg) in &self.segments_map {
-                if seg.speaker.as_ref().map(|s| s == &speaker).unwrap_or(false) {
-                    matched_segment = Some(seg.clone());
-                    found_marker = Some(marker.clone());
-                    info!("   ✅ 回退匹配: 使用同角色({})的下一个 segment", speaker);
-                    break;
-                }
-            }
-            if let Some(marker) = found_marker {
-                self.segments_map.remove(&marker);
-            }
-        }
-        
-        // 回退到同角色上一个使用过的 segment
-        if matched_segment.is_none() && !self.current_speaker.is_empty() {
-            if let Some(seg) = self.last_used_segment_by_speaker.get(&self.current_speaker) {
-                matched_segment = Some(seg.clone());
-                info!("   ✅ 回退匹配: 使用{}的上一个 segment（容错）", self.current_speaker);
-            }
-        }
-        
-        // 记录当前角色使用的 segment
         if let Some(seg) = &matched_segment {
             if !self.current_speaker.is_empty() {
                 self.last_used_segment_by_speaker.insert(self.current_speaker.clone(), seg.clone());
             }
         }
         
-        // 构建对话段落
         let segment = if let Some(matched) = matched_segment {
-            // 详细记录匹配到的情感参数
-            info!("   🎭 情感参数识别结果:");
-            info!("      gender: {}", matched.gender.as_ref().map(|g| g.as_str()).unwrap_or("(未设置)"));
-            info!("      emotion: {}", matched.emotion.as_ref().map(|e| e.as_str()).unwrap_or("(未设置)"));
-            if let Some(ref vec) = matched.emotion_vector {
-                let vec_parts: Vec<String> = vec.iter()
-                    .filter(|(_, v)| **v > 0.0)
-                    .map(|(k, v)| format!("{}={:.2}", k, v))
-                    .collect();
-                if !vec_parts.is_empty() {
-                    info!("      emotion_vector: {}", vec_parts.join(", "));
-                } else {
-                    info!("      emotion_vector: (全零或空)");
-                }
-            } else {
-                info!("      emotion_vector: (未设置)");
-            }
-            if let Some(ref desc) = matched.emotion_description {
-                if !desc.is_empty() {
-                    info!("      emotion_description: {}", desc);
-                }
-            }
-            if let Some(speed) = matched.speed {
-                if (speed - 1.0).abs() > 0.01 {
-                    info!("      speed: {:.2}", speed);
-                }
-            }
+            Self::log_matched_segment(&matched);
             DialogueSegment::from_segment(dialogue_text.clone(), self.current_speaker.clone(), &matched, self.is_nsfw)
         } else {
             warn!("   ❌ 未匹配到任何 segment，使用默认空配置");
@@ -558,13 +550,11 @@ impl StreamingTTSParser {
         
         self.detected_dialogues.push(segment.clone());
         
-        // 跳过旁白
         if segment.skip_tts {
             info!("跳过旁白: {}...", &dialogue_text.chars().take(30).collect::<String>());
             return;
         }
         
-        // 触发回调
         if let Some(callback) = &self.on_dialogue_detected {
             info!("检测到对话: [{}] {}...", segment.speaker, 
                   dialogue_text.chars().take(40).collect::<String>());

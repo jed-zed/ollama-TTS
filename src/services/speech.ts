@@ -3,7 +3,7 @@
  * 提供录音和语音识别功能
  */
 
-const API_BASE_URL = 'http://localhost:8765';
+import { API_BASE_URL } from '@/lib/constants';
 
 export interface RecognizeResponse {
   success: boolean;
@@ -53,7 +53,6 @@ class SpeechService {
 
       this.mediaRecorder.start(100);
       this.isRecording = true;
-      console.log('Recording started');
       return true;
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -83,7 +82,6 @@ class SpeechService {
           this.stream = null;
         }
         
-        console.log('Recording stopped, blob size:', audioBlob.size);
         resolve(audioBlob);
       };
 

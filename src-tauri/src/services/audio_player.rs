@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use tracing::{info, error, debug};
 use rodio::{Decoder, OutputStream, Sink};
 
@@ -22,6 +22,8 @@ enum PlayerCommand {
     Play(Vec<u8>),
     /// 缓冲播放模式：带序号的音频段落
     PlayBuffered {
+        /// 对话唯一标识
+        dialogue_id: u64,
         /// 段落序号（从 0 开始）
         seq: usize,
         /// 总段落数
@@ -48,6 +50,15 @@ pub struct PlayerStatus {
     pub queue_size: usize,
     /// 当前音量
     pub volume: f32,
+}
+
+/// 单个对话的缓冲区
+struct DialogueBuffer {
+    dialogue_id: u64,
+    total: usize,
+    segments: BTreeMap<usize, Vec<u8>>,
+    next_seq: usize,
+    started: bool,
 }
 
 /// TTS 音频播放器
@@ -126,10 +137,7 @@ impl TTSPlayer {
         let mut audio_queue: Vec<Vec<u8>> = Vec::new();
         let mut playing = false;
         
-        let mut buffered_segments: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
-        let mut buffered_total: usize = 0;
-        let mut buffered_next_seq: usize = 0;
-        let mut buffered_started: bool = false;
+        let mut dialogue_queue: VecDeque<DialogueBuffer> = VecDeque::new();
         const BUFFER_THRESHOLD: usize = 2;
 
         loop {
@@ -142,33 +150,38 @@ impl TTSPlayer {
                             s.queue_size = audio_queue.len();
                         }
                     }
-                    PlayerCommand::PlayBuffered { seq, total, data } => {
-                        debug!("收到缓冲播放命令: seq={}/{}, {} 字节", seq, total, data.len());
+                    PlayerCommand::PlayBuffered { dialogue_id, seq, total, data } => {
+                        debug!("收到缓冲播放命令: dialogue_id={}, seq={}/{}, {} 字节", dialogue_id, seq, total, data.len());
                         
-                        if seq == 0 && (buffered_total != total || buffered_next_seq != 0) {
-                            if !buffered_segments.is_empty() {
-                                info!("新对话开始，清空旧缓冲区 (旧: {} 段)", buffered_segments.len());
-                            }
-                            buffered_segments.clear();
-                            buffered_next_seq = 0;
-                            buffered_started = false;
-                        }
+                        let buf = if let Some(existing) = dialogue_queue.iter_mut().find(|d| d.dialogue_id == dialogue_id) {
+                            existing
+                        } else {
+                            dialogue_queue.push_back(DialogueBuffer {
+                                dialogue_id,
+                                total,
+                                segments: BTreeMap::new(),
+                                next_seq: 0,
+                                started: false,
+                            });
+                            info!("新对话加入队列: dialogue_id={}, total={}, 队列深度={}", dialogue_id, total, dialogue_queue.len());
+                            dialogue_queue.back_mut().unwrap()
+                        };
                         
-                        buffered_segments.insert(seq, data);
-                        buffered_total = total;
+                        buf.segments.insert(seq, data);
                         
-                        if !buffered_started {
-                            let ready_count = buffered_segments.len();
+                        if !buf.started {
+                            let ready_count = buf.segments.len();
                             let is_last_segment = seq == total - 1;
                             
                             if ready_count >= BUFFER_THRESHOLD || is_last_segment || total == 1 {
-                                buffered_started = true;
-                                info!("缓冲播放启动: 已缓冲 {} 段 (阈值={})", ready_count, BUFFER_THRESHOLD);
+                                buf.started = true;
+                                info!("对话 {} 缓冲就绪: 已缓冲 {} 段 (阈值={})", dialogue_id, ready_count, BUFFER_THRESHOLD);
                             }
                         }
                         
                         if let Ok(mut s) = status.lock() {
-                            s.queue_size = audio_queue.len() + buffered_segments.len();
+                            let total_pending: usize = dialogue_queue.iter().map(|d| d.segments.len()).sum();
+                            s.queue_size = audio_queue.len() + total_pending;
                         }
                     }
                     PlayerCommand::Stop => {
@@ -181,10 +194,7 @@ impl TTSPlayer {
                     PlayerCommand::StopAll => {
                         sink.stop();
                         audio_queue.clear();
-                        buffered_segments.clear();
-                        buffered_total = 0;
-                        buffered_next_seq = 0;
-                        buffered_started = false;
+                        dialogue_queue.clear();
                         playing = false;
                         if let Ok(mut s) = status.lock() {
                             s.playing = false;
@@ -219,7 +229,8 @@ impl TTSPlayer {
                 let data_len = audio_data.len();
                 
                 if let Ok(mut s) = status.lock() {
-                    s.queue_size = audio_queue.len() + buffered_segments.len();
+                    let total_pending: usize = dialogue_queue.iter().map(|d| d.segments.len()).sum();
+                    s.queue_size = audio_queue.len() + total_pending;
                 }
 
                 match Decoder::new(Cursor::new(audio_data)) {
@@ -237,41 +248,48 @@ impl TTSPlayer {
                 }
             }
             
-            if sink.empty() && audio_queue.is_empty() && buffered_started {
-                if let Some(audio_data) = buffered_segments.remove(&buffered_next_seq) {
-                    let data_len = audio_data.len();
-                    let current_seq = buffered_next_seq;
-                    buffered_next_seq += 1;
-                    
-                    if let Ok(mut s) = status.lock() {
-                        s.queue_size = buffered_segments.len();
-                    }
-
-                    match Decoder::new(Cursor::new(audio_data)) {
-                        Ok(source) => {
-                            sink.append(source);
-                            playing = true;
-                            if let Ok(mut s) = status.lock() {
-                                s.playing = true;
+            if sink.empty() && audio_queue.is_empty() {
+                if let Some(front) = dialogue_queue.front_mut() {
+                    if front.started {
+                        if let Some(audio_data) = front.segments.remove(&front.next_seq) {
+                            let data_len = audio_data.len();
+                            let current_seq = front.next_seq;
+                            let dialogue_id = front.dialogue_id;
+                            let total = front.total;
+                            front.next_seq += 1;
+                            
+                            let dialogue_done = front.next_seq >= front.total && front.segments.is_empty();
+                            
+                            if dialogue_done {
+                                dialogue_queue.pop_front();
+                                info!("对话 {} 播放完成，移出队列 (剩余对话: {})", dialogue_id, dialogue_queue.len());
                             }
-                            info!("播放缓冲段落 {}/{}: {} 字节 (剩余: {})", 
-                                  current_seq + 1, buffered_total, data_len, buffered_segments.len());
+                            
+                            if let Ok(mut s) = status.lock() {
+                                let total_pending: usize = dialogue_queue.iter().map(|d| d.segments.len()).sum();
+                                s.queue_size = total_pending;
+                            }
+
+                            match Decoder::new(Cursor::new(audio_data)) {
+                                Ok(source) => {
+                                    sink.append(source);
+                                    playing = true;
+                                    if let Ok(mut s) = status.lock() {
+                                        s.playing = true;
+                                    }
+                                    info!("播放段落 {}/{} (对话 {}): {} 字节", 
+                                          current_seq + 1, total, dialogue_id, data_len);
+                                }
+                                Err(e) => {
+                                    error!("音频解码失败: {} (对话 {}, seq={}, {} 字节)", e, dialogue_id, current_seq, data_len);
+                                }
+                            }
                         }
-                        Err(e) => {
-                            error!("缓冲音频解码失败: {} (seq={}, 数据大小: {} 字节)", e, current_seq, data_len);
-                        }
-                    }
-                    
-                    if buffered_next_seq >= buffered_total && buffered_segments.is_empty() {
-                        info!("缓冲播放完成，重置状态");
-                        buffered_total = 0;
-                        buffered_next_seq = 0;
-                        buffered_started = false;
                     }
                 }
             }
             
-            if sink.empty() && playing && audio_queue.is_empty() && buffered_segments.is_empty() {
+            if sink.empty() && playing && audio_queue.is_empty() && dialogue_queue.is_empty() {
                 debug!("当前音频播放完成，队列已空");
                 playing = false;
                 if let Ok(mut s) = status.lock() {
@@ -301,7 +319,7 @@ impl TTSPlayer {
     }
 
     /// 将音频加入缓冲播放队列（边合成边播放模式）
-    pub fn enqueue_buffered(&mut self, seq: usize, total: usize, audio_data: Vec<u8>) {
+    pub fn enqueue_buffered(&mut self, dialogue_id: u64, seq: usize, total: usize, audio_data: Vec<u8>) {
         if !self.initialized {
             info!("播放器未初始化，正在初始化...");
             self.initialize();
@@ -309,10 +327,10 @@ impl TTSPlayer {
 
         if let Some(tx) = &self.command_tx {
             let data_len = audio_data.len();
-            if tx.send(PlayerCommand::PlayBuffered { seq, total, data: audio_data }).is_err() {
+            if tx.send(PlayerCommand::PlayBuffered { dialogue_id, seq, total, data: audio_data }).is_err() {
                 error!("发送缓冲播放命令失败");
             } else {
-                debug!("缓冲播放命令已发送: seq={}/{}, {} 字节", seq, total, data_len);
+                debug!("缓冲播放命令已发送: dialogue_id={}, seq={}/{}, {} 字节", dialogue_id, seq, total, data_len);
             }
         } else {
             error!("播放器通道未创建，无法发送缓冲播放命令");
@@ -461,13 +479,13 @@ impl TTSManager {
     }
 
     /// 将音频加入缓冲播放队列（边合成边播放模式）
-    pub fn enqueue_audio_buffered(&mut self, seq: usize, total: usize, audio_data: Vec<u8>) {
+    pub fn enqueue_audio_buffered(&mut self, dialogue_id: u64, seq: usize, total: usize, audio_data: Vec<u8>) {
         if !self.enabled {
             return;
         }
         
         if self.auto_play {
-            self.player.enqueue_buffered(seq, total, audio_data);
+            self.player.enqueue_buffered(dialogue_id, seq, total, audio_data);
         }
     }
 

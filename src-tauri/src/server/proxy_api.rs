@@ -15,6 +15,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, error, warn, debug};
@@ -70,6 +71,12 @@ pub struct OllamaGenerateRequest {
     pub stream: bool,
     #[serde(flatten)]
     pub extra: Option<Value>,
+}
+
+static DIALOGUE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_dialogue_id() -> u64 {
+    DIALOGUE_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 fn broadcast_log(broadcaster: &SseBroadcaster, level: &str, message: &str) {
@@ -309,6 +316,7 @@ async fn process_stream_response(
                         is_nsfw,
                     };
                     
+                    let dialogue_id = next_dialogue_id();
                     let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
                     
                     let mgr_for_receiver = mgr.clone();
@@ -323,6 +331,7 @@ async fn process_stream_response(
                             
                             let mut manager = mgr_for_receiver.lock().await;
                             manager.enqueue_audio_buffered(
+                                dialogue_id,
                                 segment_audio.seq,
                                 segment_audio.total,
                                 segment_audio.audio_data,
@@ -337,7 +346,7 @@ async fn process_stream_response(
                     
                     let audio_result = {
                         let mut engine = gsv.lock().await;
-                        engine.synthesize_streaming(tts_request, tx).await
+                        engine.synthesize_streaming(tts_request, dialogue_id, tx).await
                     };
                     
                     let _ = receiver_handle.await;
@@ -532,6 +541,7 @@ async fn process_fake_stream_response(
                     is_nsfw,
                 };
                 
+                let dialogue_id = next_dialogue_id();
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
                 
                 let mgr_for_receiver = mgr.clone();
@@ -546,6 +556,7 @@ async fn process_fake_stream_response(
                         
                         let mut manager = mgr_for_receiver.lock().await;
                         manager.enqueue_audio_buffered(
+                            dialogue_id,
                             segment_audio.seq,
                             segment_audio.total,
                             segment_audio.audio_data,
@@ -560,7 +571,7 @@ async fn process_fake_stream_response(
                 
                 let audio_result = {
                     let mut engine = gsv.lock().await;
-                    engine.synthesize_streaming(tts_request, tx).await
+                    engine.synthesize_streaming(tts_request, dialogue_id, tx).await
                 };
                 
                 let _ = receiver_handle.await;
@@ -734,6 +745,7 @@ async fn process_non_stream_response(
                             is_nsfw,
                         };
                         
+                        let dialogue_id = next_dialogue_id();
                         let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::models::tts_types::TtsSegmentAudio>(16);
                         
                         let mgr_for_receiver = mgr.clone();
@@ -748,6 +760,7 @@ async fn process_non_stream_response(
                                 
                                 let mut manager = mgr_for_receiver.lock().await;
                                 manager.enqueue_audio_buffered(
+                                    dialogue_id,
                                     segment_audio.seq,
                                     segment_audio.total,
                                     segment_audio.audio_data,
@@ -762,7 +775,7 @@ async fn process_non_stream_response(
                         
                         let audio_result = {
                             let mut engine = gsv.lock().await;
-                            engine.synthesize_streaming(tts_request, tx).await
+                            engine.synthesize_streaming(tts_request, dialogue_id, tx).await
                         };
                         
                         let _ = receiver_handle.await;

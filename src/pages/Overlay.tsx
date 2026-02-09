@@ -17,7 +17,7 @@ import React, { useEffect, useState, useMemo, useCallback, useRef, CSSProperties
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { 
   GripHorizontal, X, RotateCcw, MousePointer2, MousePointerClick, 
-  Mic, MicOff, Send, Type, Palette, Clock, Eye, EyeOff, Loader2, History
+  Mic, MicOff, Send, Type, Palette, Clock, Loader2, History
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { subtitleWindow, isTauri } from '@/services/tauri';
 import { speechService } from '@/services/speech';
+import { API_BASE_URL, SCROLL_THRESHOLD } from '@/lib/constants';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -99,7 +100,7 @@ const Overlay: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   
-  const SCROLL_THRESHOLD = 50;
+  
 
   const { displayedText, isTyping, reset: resetTypewriter } = useTypewriter(streamContent, {
     charDelay: config.charDelay,
@@ -119,7 +120,7 @@ const Overlay: React.FC = () => {
   useEffect(() => {
     const loadSpeechConfig = async () => {
       try {
-        const response = await fetch('http://localhost:8765/api/config');
+        const response = await fetch(`${API_BASE_URL}/api/config`);
         if (response.ok) {
           const result = await response.json();
           const configData = result.data || result;

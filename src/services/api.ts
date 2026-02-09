@@ -5,9 +5,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { ApiResponse } from './types';
+import { API_BASE_URL, HEALTH_CHECK_TIMEOUT_MS } from '@/lib/constants';
 
-// 默认后端地址
-const DEFAULT_BASE_URL = 'http://localhost:8765';
+const DEFAULT_BASE_URL = API_BASE_URL;
 
 class ApiClient {
   private baseUrl: string;
@@ -256,7 +256,7 @@ export async function checkBackendHealth(): Promise<{
 }> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
 
     const response = await fetch(`${apiClient.getBaseUrl()}/health`, {
       method: 'GET',

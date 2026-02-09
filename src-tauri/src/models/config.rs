@@ -5,6 +5,26 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// 预设 API 配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PresetApiConfig {
+    #[serde(default)]
+    pub api_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model_name: String,
+}
+
+/// 用户自定义预设元数据
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserPresetMeta {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+}
+
 /// 主配置结构体
 /// 
 /// 包含应用的所有配置项，对应 Python 后端的 config.json。
@@ -28,6 +48,10 @@ pub struct Config {
     pub custom_api_key: String,
     /// 自定义预设保存的模型名称
     pub custom_model_name: String,
+    /// 按预设独立存储的 API 配置
+    pub preset_configs: HashMap<String, PresetApiConfig>,
+    /// 用户自定义预设元数据
+    pub user_presets: HashMap<String, UserPresetMeta>,
     
     // ==================== TTS 配置 ====================
     /// 是否启用 TTS
@@ -125,6 +149,10 @@ pub struct Config {
     pub subtitle_auto_hide: bool,
     /// 自动隐藏延迟 (ms)
     pub subtitle_auto_hide_delay: i32,
+    /// 用户自定义字体颜色预设
+    pub custom_font_colors: HashMap<String, String>,
+    /// 用户自定义背景颜色预设
+    pub custom_bg_colors: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -139,6 +167,8 @@ impl Default for Config {
             custom_api_url: String::new(),
             custom_api_key: String::new(),
             custom_model_name: String::new(),
+            preset_configs: HashMap::new(),
+            user_presets: HashMap::new(),
             
             // TTS 配置
             tts_enabled: true,
@@ -199,6 +229,8 @@ impl Default for Config {
             subtitle_typing_speed: 50,
             subtitle_auto_hide: true,
             subtitle_auto_hide_delay: 3000,
+            custom_font_colors: HashMap::new(),
+            custom_bg_colors: HashMap::new(),
         }
     }
 }

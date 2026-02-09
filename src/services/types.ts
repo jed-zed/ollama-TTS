@@ -34,8 +34,14 @@ export interface HistoryCompressionConfig {
 }
 
 export interface PresetApiConfig {
+  api_url: string;
   api_key: string;
   model_name: string;
+}
+
+export interface UserPresetMeta {
+  name: string;
+  emoji?: string;
 }
 
 export interface Config {
@@ -53,6 +59,9 @@ export interface Config {
 
   // 按预设独立存储的 API 配置
   preset_configs?: Record<string, PresetApiConfig>;
+
+  // 用户自定义预设元数据（名称和图标）
+  user_presets?: Record<string, UserPresetMeta>;
 
   // TTS 配置
   tts_enabled: boolean;
@@ -91,6 +100,10 @@ export interface Config {
   subtitle_bg_color: string;
   subtitle_opacity: number;
   subtitle_font_size: number;
+
+  // 用户自定义颜色预设
+  custom_font_colors?: Record<string, string>;
+  custom_bg_colors?: Record<string, string>;
 
   // 历史压缩配置
   history_compression: HistoryCompressionConfig;
