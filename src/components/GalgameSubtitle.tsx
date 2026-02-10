@@ -164,7 +164,7 @@ const GalgameSubtitle = ({
 
         {!textOnly && (
         <div
-          className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-pink-50 to-white border-b border-pink-100 cursor-move"
+          className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gradient-to-r from-pink-50 to-white border-b border-pink-100 cursor-move"
           role="toolbar"
           aria-label="字幕控制工具栏"
         >
@@ -173,7 +173,7 @@ const GalgameSubtitle = ({
             <span className="text-xs text-muted-foreground">拖动</span>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Label htmlFor={transparencyId} className="text-muted-foreground text-xs">
                 透明
@@ -243,7 +243,7 @@ const GalgameSubtitle = ({
             </Button>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 ml-auto">
             <Button
               variant="ghost"
               size="icon"

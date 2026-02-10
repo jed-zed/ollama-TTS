@@ -418,7 +418,7 @@ const Overlay: React.FC = () => {
       {!config.textOnly && (
       <div className="relative" style={{ pointerEvents: 'auto' }}>
         <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
-        <div className="relative z-10 flex items-center justify-between px-3 py-1.5" style={{ color: config.fontColor }}>
+        <div className="relative z-10 flex flex-wrap items-center gap-2 px-3 py-1.5" style={{ color: config.fontColor }}>
           <div 
             className="flex items-center gap-2 cursor-move opacity-50"
             onMouseDown={startWindowDrag}
@@ -428,7 +428,7 @@ const Overlay: React.FC = () => {
           </div>
 
         {/* 中间：控件 */}
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs flex-1 min-w-0">
           {/* 字号 */}
           <div className="flex items-center gap-1.5">
             <Type className="w-3 h-3 opacity-70" />
@@ -545,7 +545,7 @@ const Overlay: React.FC = () => {
         </div>
 
         {/* 右侧：操作按钮 */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 ml-auto">
           <Button variant="ghost" size="sm" className="h-6 px-2 opacity-70 hover:opacity-100 hover:bg-white/10" onClick={handleClear}>
             清空
           </Button>

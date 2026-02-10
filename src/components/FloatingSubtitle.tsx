@@ -505,7 +505,7 @@ const FloatingSubtitleInner: React.FC = () => {
       >
         {!textOnly && (
         <div
-          className={`flex items-center justify-between px-3 py-2 border-b ${theme.toolbarBorder}`}
+          className={`flex flex-wrap items-center gap-2 px-3 py-2 border-b ${theme.toolbarBorder}`}
           role="toolbar"
           aria-label="字幕控制工具栏"
           style={{ cursor: clickThrough ? 'default' : 'move', pointerEvents: clickThrough ? 'none' : 'auto' }}
@@ -516,7 +516,7 @@ const FloatingSubtitleInner: React.FC = () => {
             <span className="text-xs" style={{ color: fontColor, opacity: 0.7 }}>拖动</span>
           </div>
 
-          <div className="flex items-center gap-4 text-xs" style={{ pointerEvents: 'auto' }}>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs flex-1 min-w-0" style={{ pointerEvents: 'auto' }}>
             {/* 透明度滑块 - 支持 0-100% 全区间 */}
             <div className="flex items-center gap-2">
               <span style={{ color: fontColor, opacity: 0.7 }}>透明</span>
@@ -598,7 +598,7 @@ const FloatingSubtitleInner: React.FC = () => {
             </Button>
           </div>
 
-          <div className="flex items-center gap-1" style={{ pointerEvents: 'auto' }}>
+          <div className="flex items-center gap-1 ml-auto" style={{ pointerEvents: 'auto' }}>
             {/* 历史记录按钮 */}
             <Button variant="ghost" size="sm" className={`h-6 px-2 text-xs ${theme.buttonHoverSoft}`} onClick={() => setShowHistory(!showHistory)}>
               <History className="w-3 h-3 mr-1" style={{ color: fontColor }} />
