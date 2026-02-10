@@ -13,7 +13,8 @@ import {
   EyeOff,
   Plus,
   Check,
-  Loader2
+  Loader2,
+  Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,8 +32,9 @@ import { useStreamStore, useStreamHistory, useIsStreaming, useStreamContent, use
 import { streamChat } from '@/services/stream';
 import { checkBackendHealth } from '@/services/api';
 import { HEALTH_CHECK_INTERVAL_MS, API_BASE_URL } from '@/lib/constants';
-import type { ChatMessage } from '@/services/types';
+import type { ChatMessage, PresetApiConfig } from '@/services/types';
 import { speechService } from '@/services/speech';
+import { BUILTIN_PRESETS } from '@/components/PresetManager';
 
 /**
  * 服务连接页面（首页）
@@ -90,6 +92,68 @@ const Index = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const resolvePresetConfig = useCallback((presetId: string): PresetApiConfig | null => {
+    if (!presetId) return null;
+    if (presetId === 'custom') {
+      const apiUrl = config?.custom_api_url || '';
+      const apiKey = config?.custom_api_key || '';
+      const modelName = config?.custom_model_name || '';
+      if (!apiUrl && !modelName) return null;
+      return { api_url: apiUrl, api_key: apiKey, model_name: modelName };
+    }
+    const savedConfig = config?.preset_configs?.[presetId];
+    const builtinPreset = BUILTIN_PRESETS[presetId];
+    const fallbackUrl = builtinPreset?.url || '';
+    const fallbackModel = builtinPreset?.defaultModel || '';
+    const apiUrl = savedConfig?.api_url || fallbackUrl;
+    const apiKey = savedConfig?.api_key || '';
+    const modelName = savedConfig?.model_name || fallbackModel;
+    if (!apiUrl && !modelName) return null;
+    return { api_url: apiUrl, api_key: apiKey, model_name: modelName };
+  }, [config]);
+
+  interface ModelSelection {
+    model: string;
+    apiOverride?: { api_url: string; api_key: string };
+  }
+
+  const FALLBACK_TRIGGER_PREFIX = 'SYSTEM:\n';
+
+  const selectModel = useCallback((userMessage: string): ModelSelection => {
+    const defaultModel = config?.model_name || 'deepseek-ai/DeepSeek-V3';
+    const defaultResult: ModelSelection = { model: defaultModel };
+
+    if (!config?.fallback_model_enabled || !config?.fallback_preset_id) {
+      return defaultResult;
+    }
+
+    if (!userMessage.startsWith(FALLBACK_TRIGGER_PREFIX)) {
+      return defaultResult;
+    }
+
+    const presetConfig = resolvePresetConfig(config.fallback_preset_id);
+    if (!presetConfig || !presetConfig.model_name) {
+      console.warn('[模型切换] 辅助预设配置无效，回退到主模型');
+      return defaultResult;
+    }
+
+    const presetLabel = BUILTIN_PRESETS[config.fallback_preset_id]?.label
+      || config.user_presets?.[config.fallback_preset_id]?.name
+      || config.fallback_preset_id;
+
+    console.log(
+      `[模型切换] 用户消息匹配辅助模型触发前缀`,
+      `→ 切换至辅助预设: ${presetLabel} (${presetConfig.model_name})`
+    );
+
+    return {
+      model: presetConfig.model_name,
+      apiOverride: presetConfig.api_url !== config.api_url
+        ? { api_url: presetConfig.api_url, api_key: presetConfig.api_key }
+        : undefined,
+    };
+  }, [config, resolvePresetConfig]);
+
   const handleSendMessage = useCallback(async () => {
     if (!inputMessage.trim() || isSending) return;
 
@@ -104,9 +168,16 @@ const Index = () => {
       { role: 'user' as const, content: userMessage }
     ];
 
+    const { model: selectedModel, apiOverride } = selectModel(userMessage);
+
     try {
       await streamChat(
-        { messages, model: config?.model_name, stream: true },
+        {
+          messages,
+          model: selectedModel,
+          stream: true,
+          ...(apiOverride ? { api_url: apiOverride.api_url, api_key: apiOverride.api_key } : {}),
+        },
         {
           onChunk: (event) => {
             if (event.type === 'content' && event.data.content) {
@@ -127,7 +198,7 @@ const Index = () => {
       console.error('Send message failed:', error);
       setIsSending(false);
     }
-  }, [inputMessage, isSending, config, history, clearCurrent, appendContent, finishStream]);
+  }, [inputMessage, isSending, config, history, clearCurrent, appendContent, finishStream, selectModel]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -314,6 +385,117 @@ const Index = () => {
               </p>
             </div>
           </CardContent>
+        </Card>
+
+        <Card className="glass border-none shadow-custom col-span-2">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-100 text-emerald-600">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle>辅助模型</CardTitle>
+                  <CardDescription>简单场景自动切换到低成本模型</CardDescription>
+                </div>
+              </div>
+              <Switch
+                checked={config?.fallback_model_enabled || false}
+                onCheckedChange={(checked) => updateConfig('fallback_model_enabled', checked)}
+                className="data-[state=checked]:bg-emerald-500"
+              />
+            </div>
+          </CardHeader>
+          {config?.fallback_model_enabled && (
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>辅助预设</Label>
+                <Select
+                  value={config?.fallback_preset_id || ''}
+                  onValueChange={(value) => updateConfig('fallback_preset_id', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择一个预设作为辅助模型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(BUILTIN_PRESETS)
+                      .filter(([id]) => id !== config?.current_api_preset)
+                      .map(([id, preset]) => (
+                        <SelectItem key={id} value={id}>
+                          {preset.emoji} {preset.label}
+                          {config?.preset_configs?.[id]?.model_name
+                            ? ` (${config.preset_configs[id].model_name})`
+                            : preset.defaultModel ? ` (${preset.defaultModel})` : ''}
+                        </SelectItem>
+                      ))}
+                    {Object.entries(config?.user_presets || {})
+                      .filter(([id]) => id !== config?.current_api_preset)
+                      .map(([id, meta]) => (
+                        <SelectItem key={id} value={id}>
+                          {meta.emoji || '⭐'} {meta.name}
+                          {config?.preset_configs?.[id]?.model_name
+                            ? ` (${config.preset_configs[id].model_name})`
+                            : ''}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  从已保存的预设中选择，将使用该预设的 API 地址、密钥和模型
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>系统提示词阈值</Label>
+                  <span className="text-sm font-medium text-emerald-600">
+                    {config?.fallback_trigger_threshold ?? 100} 字符
+                  </span>
+                </div>
+                <Slider
+                  value={[config?.fallback_trigger_threshold ?? 100]}
+                  onValueChange={([value]) => updateConfig('fallback_trigger_threshold', value)}
+                  min={0}
+                  max={500}
+                  step={10}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  系统提示词少于此字符数时视为"简单"
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>触发模式（正则表达式）</Label>
+                <Input
+                  placeholder="^SYSTEM:\n"
+                  value={config?.fallback_pattern || '^SYSTEM:\\n'}
+                  onChange={(e) => updateConfig('fallback_pattern', e.target.value)}
+                  className="bg-white/50 font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  用户消息匹配此正则时触发切换，默认匹配 SYSTEM: 开头
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm">
+                <p className="font-medium mb-2 text-emerald-700">💡 双重检查机制</p>
+                <div className="space-y-1.5 text-emerald-600">
+                  <div className="flex gap-2">
+                    <span className="font-semibold">✓ 第一段：</span>
+                    <span>系统提示词为空或简单（&lt; {config?.fallback_trigger_threshold ?? 100} 字符）</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-semibold">✓ 第二段：</span>
+                    <span>用户消息匹配触发模式</span>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-emerald-200 text-xs">
+                    <p className="font-semibold text-emerald-700">两个条件都满足 → 切换到辅助模型</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          )}
         </Card>
 
         <Card className="glass border-none shadow-custom">

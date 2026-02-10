@@ -167,9 +167,10 @@ async fn set_subtitle_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(),
     Ok(())
 }
 
-/// 将文本复制到系统剪贴板并模拟 Ctrl+V 粘贴到当前焦点窗口
+/// 将文本复制到系统剪贴板并根据粘贴模式模拟按键粘贴到当前焦点窗口
+/// paste_mode: "direct" = Ctrl+V, "ahk" = Ctrl+Shift+V (AutoHotkey)
 #[tauri::command]
-async fn clipboard_paste(text: String) -> Result<(), String> {
+async fn clipboard_paste(text: String, paste_mode: Option<String>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         use arboard::Clipboard;
         use enigo::{Enigo, Keyboard, Key, Settings, Direction};
@@ -180,9 +181,19 @@ async fn clipboard_paste(text: String) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("Enigo error: {}", e))?;
-        enigo.key(Key::Control, Direction::Press).map_err(|e| format!("Key error: {}", e))?;
-        enigo.key(Key::Unicode('v'), Direction::Click).map_err(|e| format!("Key error: {}", e))?;
-        enigo.key(Key::Control, Direction::Release).map_err(|e| format!("Key error: {}", e))?;
+
+        let mode = paste_mode.unwrap_or_else(|| "direct".to_string());
+        if mode == "ahk" {
+            enigo.key(Key::Control, Direction::Press).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Shift, Direction::Press).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Other(0x56), Direction::Click).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Shift, Direction::Release).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Control, Direction::Release).map_err(|e| format!("Key error: {}", e))?;
+        } else {
+            enigo.key(Key::Control, Direction::Press).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Other(0x56), Direction::Click).map_err(|e| format!("Key error: {}", e))?;
+            enigo.key(Key::Control, Direction::Release).map_err(|e| format!("Key error: {}", e))?;
+        }
 
         Ok::<(), String>(())
     })

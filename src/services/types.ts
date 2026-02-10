@@ -115,6 +115,15 @@ export interface Config {
   // 语音识别引擎选择
   speech_engine: 'baidu' | 'xunfei';
 
+  // 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
+  paste_mode: 'direct' | 'ahk';
+
+  // 辅助模型配置（双重检查版）
+  fallback_model_enabled?: boolean;
+  fallback_preset_id?: string;
+  fallback_trigger_threshold?: number;
+  fallback_pattern?: string;
+
   // 历史压缩配置
   history_compression: HistoryCompressionConfig;
 }
@@ -216,6 +225,8 @@ export interface ChatRequest {
   messages: ChatMessage[];
   model?: string;
   stream?: boolean;
+  api_url?: string;
+  api_key?: string;
 }
 
 export interface ChatResponse {

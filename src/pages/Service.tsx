@@ -14,7 +14,8 @@ import {
   Check,
   Loader2,
   Play,
-  Square
+  Square,
+  Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +31,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useTTSStore } from '@/stores/ttsStore';
 import { ModelCombobox } from '@/components/ModelCombobox';
-import PresetManager from '@/components/PresetManager';
+import PresetManager, { BUILTIN_PRESETS } from '@/components/PresetManager';
 import { listen } from '@tauri-apps/api/event';
 import { checkBackendHealth, pollBackendHealth, type HealthCheckResponse, apiClient, getProxyStatus, startProxy, stopProxy, testProxy, testProxyStream, type TestStreamMetrics } from '@/services/api';
 
@@ -757,6 +758,83 @@ const Service = () => {
               />
             </div>
           </CardContent>
+        </Card>
+
+        <Card className="glass border-none shadow-custom col-span-2">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-100 text-emerald-600">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle>辅助模型</CardTitle>
+                  <CardDescription>简单场景自动切换到低成本模型</CardDescription>
+                </div>
+              </div>
+              <Switch
+                checked={config?.fallback_model_enabled || false}
+                onCheckedChange={(checked) => updateConfig('fallback_model_enabled', checked)}
+                className="data-[state=checked]:bg-emerald-500"
+              />
+            </div>
+          </CardHeader>
+          {config?.fallback_model_enabled && (
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>辅助预设</Label>
+                <Select
+                  value={config?.fallback_preset_id || ''}
+                  onValueChange={(value) => updateConfig('fallback_preset_id', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择一个预设作为辅助模型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {'custom' !== config?.current_api_preset && (
+                      <SelectItem value="custom">
+                        🔧 自定义 (Custom)
+                        {config?.custom_model_name ? ` (${config.custom_model_name})` : ''}
+                      </SelectItem>
+                    )}
+                    {Object.entries(BUILTIN_PRESETS)
+                      .filter(([id]) => id !== config?.current_api_preset)
+                      .map(([id, preset]) => (
+                        <SelectItem key={id} value={id}>
+                          {preset.emoji} {preset.label}
+                          {config?.preset_configs?.[id]?.model_name
+                            ? ` (${config.preset_configs[id].model_name})`
+                            : preset.defaultModel ? ` (${preset.defaultModel})` : ''}
+                        </SelectItem>
+                      ))}
+                    {Object.entries(config?.user_presets || {})
+                      .filter(([id]) => id !== config?.current_api_preset)
+                      .map(([id, meta]) => (
+                        <SelectItem key={id} value={id}>
+                          {meta.emoji || '⭐'} {meta.name}
+                          {config?.preset_configs?.[id]?.model_name
+                            ? ` (${config.preset_configs[id].model_name})`
+                            : ''}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  从已保存的预设中选择，将使用该预设的 API 地址、密钥和模型
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm">
+                <p className="font-medium mb-2 text-emerald-700">💡 触发规则</p>
+                <div className="space-y-1.5 text-emerald-600">
+                  <p>当用户消息以固定前缀开头时，自动切换到辅助模型：</p>
+                  <code className="block bg-white/60 rounded px-2 py-1 text-xs font-mono text-gray-700">
+                    {'SYSTEM:\\n...'}
+                  </code>
+                </div>
+              </div>
+            </CardContent>
+          )}
         </Card>
       </div>
 

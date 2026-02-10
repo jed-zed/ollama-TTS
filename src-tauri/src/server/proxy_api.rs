@@ -90,6 +90,78 @@ fn broadcast_log(broadcaster: &SseBroadcaster, level: &str, message: &str) {
     broadcaster.send_log(event);
 }
 
+const FALLBACK_TRIGGER_PREFIX: &str = "SYSTEM:\n";
+
+fn get_builtin_preset_url(preset_id: &str) -> &'static str {
+    match preset_id {
+        "local" => "http://127.0.0.1:11434/v1/chat/completions",
+        "siliconflow" => "https://api.siliconflow.cn/v1/chat/completions",
+        "deepseek" => "https://api.deepseek.com/v1/chat/completions",
+        "volcengine" => "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        "ggchan" => "https://gcli.ggchan.dev/v1/chat/completions",
+        "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+        "openai" => "https://api.openai.com/v1/chat/completions",
+        _ => "",
+    }
+}
+
+fn get_builtin_preset_model(preset_id: &str) -> &'static str {
+    match preset_id {
+        "deepseek" => "deepseek-chat",
+        "ggchan" => "gemini-3-pro-preview",
+        _ => "",
+    }
+}
+
+struct FallbackOverride {
+    api_url: String,
+    api_key: String,
+    model_name: String,
+}
+
+fn check_fallback_trigger(messages: &[ChatMessage], config: &crate::models::config::Config) -> Option<FallbackOverride> {
+    if !config.fallback_model_enabled || config.fallback_preset_id.is_empty() {
+        return None;
+    }
+
+    let user_content = messages.iter().rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+
+    if !user_content.starts_with(FALLBACK_TRIGGER_PREFIX) {
+        return None;
+    }
+
+    let preset_id = &config.fallback_preset_id;
+
+    let (api_url, api_key, model_name) = if preset_id == "custom" {
+        (
+            config.custom_api_url.clone(),
+            config.custom_api_key.clone(),
+            config.custom_model_name.clone(),
+        )
+    } else {
+        let saved = config.preset_configs.get(preset_id.as_str());
+        let builtin_url = get_builtin_preset_url(preset_id);
+        let builtin_model = get_builtin_preset_model(preset_id);
+
+        let url = saved.and_then(|s| if s.api_url.is_empty() { None } else { Some(s.api_url.clone()) })
+            .unwrap_or_else(|| builtin_url.to_string());
+        let key = saved.map(|s| s.api_key.clone()).unwrap_or_default();
+        let model = saved.and_then(|s| if s.model_name.is_empty() { None } else { Some(s.model_name.clone()) })
+            .unwrap_or_else(|| builtin_model.to_string());
+
+        (url, key, model)
+    };
+
+    if api_url.is_empty() && model_name.is_empty() {
+        return None;
+    }
+
+    Some(FallbackOverride { api_url, api_key, model_name })
+}
+
 /// 获取模型列表
 /// 
 /// GET /api/tags
@@ -144,16 +216,29 @@ async fn chat(
         return error_response(err_msg);
     }
     
-    let client = LlmClient::new(config.api_url.clone(), config.api_key.clone());
+    let fallback = check_fallback_trigger(&request.messages, &config);
+    let (use_api_url, use_api_key, use_model) = if let Some(ref fb) = fallback {
+        let fb_msg = format!(
+            "[辅助模型] 触发切换 → 模型: {}, API: {}",
+            fb.model_name, fb.api_url
+        );
+        info!("{}", fb_msg);
+        broadcast_log(&state.broadcaster, "INFO", &fb_msg);
+        (fb.api_url.clone(), fb.api_key.clone(), fb.model_name.clone())
+    } else {
+        (config.api_url.clone(), config.api_key.clone(), request.model.clone())
+    };
+
+    let client = LlmClient::new(use_api_url, use_api_key);
     
     let chat_request = ChatRequest {
-        model: request.model.clone(),
+        model: use_model,
         messages: request.messages,
         stream: request.stream,
         extra: request.extra,
     };
     
-    let injection = if config.system_prompt_injection.is_empty() {
+    let injection = if fallback.is_some() || config.system_prompt_injection.is_empty() {
         None
     } else {
         Some(config.system_prompt_injection.as_str())
@@ -212,16 +297,30 @@ async fn generate(
         return error_response(err_msg);
     }
     
-    let client = LlmClient::new(config.api_url.clone(), config.api_key.clone());
+    let prompt_messages = vec![ChatMessage { role: "user".to_string(), content: request.prompt.clone() }];
+    let fallback = check_fallback_trigger(&prompt_messages, &config);
+    let (use_api_url, use_api_key, use_model) = if let Some(ref fb) = fallback {
+        let fb_msg = format!(
+            "[辅助模型] 触发切换 → 模型: {}, API: {}",
+            fb.model_name, fb.api_url
+        );
+        info!("{}", fb_msg);
+        broadcast_log(&state.broadcaster, "INFO", &fb_msg);
+        (fb.api_url.clone(), fb.api_key.clone(), fb.model_name.clone())
+    } else {
+        (config.api_url.clone(), config.api_key.clone(), request.model.clone())
+    };
+
+    let client = LlmClient::new(use_api_url, use_api_key);
     
     let generate_request = GenerateRequest {
-        model: request.model.clone(),
+        model: use_model,
         prompt: request.prompt,
         stream: request.stream,
         extra: request.extra,
     };
     
-    let injection = if config.system_prompt_injection.is_empty() {
+    let injection = if fallback.is_some() || config.system_prompt_injection.is_empty() {
         None
     } else {
         Some(config.system_prompt_injection.as_str())

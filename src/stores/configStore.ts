@@ -144,6 +144,13 @@ const defaultConfig: Config = {
 
   speech_engine: 'baidu',
 
+  paste_mode: 'direct',
+
+  fallback_model_enabled: false,
+  fallback_preset_id: '',
+  fallback_trigger_threshold: 100,
+  fallback_pattern: '^SYSTEM:\\n',
+
   history_compression: {
     save_data_path: '',
     max_messages: 100,

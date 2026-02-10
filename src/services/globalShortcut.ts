@@ -17,6 +17,7 @@ class GlobalShortcutService {
   private onError: ErrorHandler | null = null;
   private speechConfig: SpeechConfig | null = null;
   private autoPaste = true;
+  private pasteMode: 'direct' | 'ahk' = 'direct';
 
   setHandlers(handlers: {
     onStateChange?: StateChangeHandler;
@@ -40,6 +41,7 @@ class GlobalShortcutService {
         const result = await response.json();
         const configData = result.data || result;
         const engine: SpeechEngine = configData.speech_engine || 'baidu';
+        this.pasteMode = configData.paste_mode === 'ahk' ? 'ahk' : 'direct';
 
         if (engine === 'xunfei' && configData.xunfei_app_id && configData.xunfei_api_key && configData.xunfei_api_secret) {
           this.speechConfig = {
@@ -165,7 +167,7 @@ class GlobalShortcutService {
 
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('clipboard_paste', { text });
+      await invoke('clipboard_paste', { text, pasteMode: this.pasteMode });
     } catch (e) {
       console.error('[GlobalShortcut] Clipboard paste failed:', e);
     }

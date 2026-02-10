@@ -113,9 +113,12 @@ pub struct Config {
     pub baidu_secret_key: String,
     
     // ==================== 讯飞语音识别 API ====================
-    pub xunfei_asr_app_id: String,
-    pub xunfei_asr_api_key: String,
-    pub xunfei_asr_api_secret: String,
+    pub xunfei_app_id: String,
+    pub xunfei_api_key: String,
+    pub xunfei_api_secret: String,
+    
+    // ==================== 语音识别引擎选择 ====================
+    pub speech_engine: String,
     
     // ==================== IndexTTS 配置 ====================
     /// IndexTTS API 地址
@@ -134,6 +137,18 @@ pub struct Config {
     // ==================== 全局快捷键配置 ====================
     pub voice_shortcut_enabled: bool,
     pub voice_shortcut: String,
+    /// 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
+    pub paste_mode: String,
+
+    // ==================== 辅助模型配置 ====================
+    #[serde(default)]
+    pub fallback_model_enabled: bool,
+    #[serde(default)]
+    pub fallback_preset_id: String,
+    #[serde(default = "default_fallback_trigger_threshold")]
+    pub fallback_trigger_threshold: i32,
+    #[serde(default = "default_fallback_pattern")]
+    pub fallback_pattern: String,
 
     // ==================== 历史压缩配置 ====================
     pub history_compression: HistoryCompressionConfig,
@@ -212,9 +227,12 @@ impl Default for Config {
             baidu_secret_key: String::new(),
             
             // 讯飞语音识别 API
-            xunfei_asr_app_id: String::new(),
-            xunfei_asr_api_key: String::new(),
-            xunfei_asr_api_secret: String::new(),
+            xunfei_app_id: String::new(),
+            xunfei_api_key: String::new(),
+            xunfei_api_secret: String::new(),
+            
+            // 语音识别引擎选择
+            speech_engine: "baidu".to_string(),
             
             // IndexTTS 配置
             indextts_api_url: "http://192.168.100.171:7860/".to_string(),
@@ -227,6 +245,13 @@ impl Default for Config {
             // 全局快捷键配置
             voice_shortcut_enabled: false,
             voice_shortcut: "Ctrl+Shift+,".to_string(),
+            paste_mode: "direct".to_string(),
+
+            // 辅助模型配置
+            fallback_model_enabled: false,
+            fallback_preset_id: String::new(),
+            fallback_trigger_threshold: 100,
+            fallback_pattern: "^SYSTEM:\\n".to_string(),
 
             // 历史压缩配置
             history_compression: HistoryCompressionConfig::default(),
@@ -304,6 +329,9 @@ impl Default for HistoryCompressionConfig {
         }
     }
 }
+
+fn default_fallback_trigger_threshold() -> i32 { 100 }
+fn default_fallback_pattern() -> String { "^SYSTEM:\\n".to_string() }
 
 /// 默认系统提示词注入
 pub const DEFAULT_SYSTEM_PROMPT_INJECTION: &str = r#"

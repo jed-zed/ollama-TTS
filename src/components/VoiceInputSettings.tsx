@@ -31,6 +31,7 @@ const VoiceInputSettings = () => {
   const capturedKeysRef = useRef<string[]>([]);
 
   const speechEngine = (config?.speech_engine || 'baidu') as SpeechEngine;
+  const pasteMode = (config?.paste_mode || 'direct') as 'direct' | 'ahk';
   const baiduAppId = config?.baidu_app_id || '';
   const baiduApiKey = config?.baidu_api_key || '';
   const baiduSecretKey = config?.baidu_secret_key || '';
@@ -336,11 +337,30 @@ const VoiceInputSettings = () => {
             </Button>
           </div>
 
+          <div className="flex items-center gap-3">
+            <Label className="text-sm shrink-0">粘贴模式</Label>
+            <Select value={pasteMode} onValueChange={(v) => {
+              updateConfig('paste_mode', v);
+              globalShortcutService.loadSpeechConfig();
+              toast.success(`粘贴模式已切换为: ${v === 'ahk' ? 'AutoHotkey (Ctrl+Shift+V)' : '直接粘贴 (Ctrl+V)'}`);
+            }}>
+              <SelectTrigger className="bg-white/50 h-9 w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="direct">直接粘贴 (Ctrl+V)</SelectItem>
+                <SelectItem value="ahk">AutoHotkey (Ctrl+Shift+V)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="bg-indigo-50/50 p-3 rounded-md text-xs text-muted-foreground border border-indigo-100 space-y-1">
             <p className="font-semibold text-indigo-700">使用说明:</p>
             <ul className="list-disc pl-4 space-y-0.5">
               <li>按下快捷键开始录音，再按一次停止录音并识别</li>
               <li>识别完成后自动复制到剪贴板并粘贴到当前焦点窗口</li>
+              <li>直接粘贴模式使用 Ctrl+V，适用于大多数应用</li>
+              <li>AutoHotkey 模式使用 Ctrl+Shift+V，需配合 AHK 脚本使用</li>
               <li>需要先配置语音识别 API（百度或讯飞）才能使用</li>
               <li>快捷键必须是组合键（如 Ctrl+Shift+,）</li>
             </ul>
