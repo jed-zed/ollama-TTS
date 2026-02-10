@@ -1,0 +1,333 @@
+{
+  "description": "GPT-SoVITS 参考音频精选结果",
+  "selection_criteria": {
+    "confidence_weight": "40%",
+    "duration_weight": "30% (最佳4-8秒)",
+    "text_length_weight": "20% (最佳15-35字)",
+    "purity_weight": "10%"
+  },
+  "emotions": {
+    "happy": {
+      "emotion_name": "喜",
+      "total_samples": 665,
+      "primary": {
+        "audio_file": "chapter4_46_cyrene_103.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_46_cyrene_103.wav",
+        "text": "但我很高兴，最后能回想起这件事。如此一来，人家就没有遗憾啦。",
+        "confidence": 1.0,
+        "duration_seconds": 6.4,
+        "quality_score": 100.0
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_53_cyrene_136.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_53_cyrene_136.wav",
+          "text": "谢谢你的好意。不过…我们更想知道，凯撒什么时候回来？",
+          "confidence": 1.0,
+          "duration_seconds": 6.1,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_41_cyrene_182.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_41_cyrene_182.wav",
+          "text": "好啦，好啦。他只是在学故事里的吟游诗人多愁善感，才不会真的忘记大家呢。",
+          "confidence": 1.0,
+          "duration_seconds": 7.6,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_41_cyrene_162.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_41_cyrene_162.wav",
+          "text": "我知道啦，那群神神秘秘的小家伙…没想到是它们在调皮捣蛋。",
+          "confidence": 1.0,
+          "duration_seconds": 7.4,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_50_cyrene_144.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_50_cyrene_144.wav",
+          "text": "总之，先试试看吧？至少得把你平安无事的好消息，带给天外的朋友们。",
+          "confidence": 1.0,
+          "duration_seconds": 6.1,
+          "quality_score": 100.0
+        }
+      ]
+    },
+    "calm": {
+      "emotion_name": "平静",
+      "total_samples": 246,
+      "primary": {
+        "audio_file": "chapter4_51_cyrene_122.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_51_cyrene_122.wav",
+        "text": "同时，也是第一次逐火之旅的尾声。",
+        "confidence": 1.0,
+        "duration_seconds": 5.5,
+        "quality_score": 100.0
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_51_cyrene_140.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_51_cyrene_140.wav",
+          "text": "这种事应该不会发生。我想，多半是有第三者插足，扰乱了局势……",
+          "confidence": 1.0,
+          "duration_seconds": 7.8,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_75_cyrene_108.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_75_cyrene_108.wav",
+          "text": "「这短暂而漫长的一瞬后，银河便将见证翁法罗斯的答案。」",
+          "confidence": 1.0,
+          "duration_seconds": 7.6,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_69_cyrene_159.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_69_cyrene_159.wav",
+          "text": "那无人知晓的、孑然的神明，不应存在的第十三位泰坦……",
+          "confidence": 0.9999998807907104,
+          "duration_seconds": 6.0,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_73_cyrene_130.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_73_cyrene_130.wav",
+          "text": "我想…《如我所书》只是一种媒介。「记忆」有千万种方法凝固时光。",
+          "confidence": 0.9999997615814209,
+          "duration_seconds": 6.6,
+          "quality_score": 100.0
+        }
+      ]
+    },
+    "sad": {
+      "emotion_name": "哀",
+      "total_samples": 94,
+      "primary": {
+        "audio_file": "chapter4_44_cyrene_119.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_44_cyrene_119.wav",
+        "text": "看着这一切的观众，又在期待什么呢？",
+        "confidence": 1.0,
+        "duration_seconds": 5.0,
+        "quality_score": 100.0
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_41_cyrene_140.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_41_cyrene_140.wav",
+          "text": "喔，已读不回啊，让人有点伤心呢。",
+          "confidence": 1.0,
+          "duration_seconds": 4.8,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_77_cyrene_213.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_77_cyrene_213.wav",
+          "text": "我的身体…却在不自觉地颤抖呀。",
+          "confidence": 1.0,
+          "duration_seconds": 4.8,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_75_cyrene_166.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_75_cyrene_166.wav",
+          "text": "混沌的尽头，是一团纯粹的暗，纯粹的…「毁灭」。",
+          "confidence": 0.9999997615814209,
+          "duration_seconds": 5.0,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_42_cyrene_131.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_42_cyrene_131.wav",
+          "text": "我们是为了回应世界的愿望而启程的，对吧？",
+          "confidence": 0.9999982118606567,
+          "duration_seconds": 4.9,
+          "quality_score": 100.0
+        }
+      ]
+    },
+    "angry": {
+      "emotion_name": "怒",
+      "total_samples": 98,
+      "primary": {
+        "audio_file": "chapter4_44_cyrene_121.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_44_cyrene_121.wav",
+        "text": "在你眼中，所有牺牲的人，都只是一串渺小的数字吗？",
+        "confidence": 1.0,
+        "duration_seconds": 6.4,
+        "quality_score": 100.0
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_50_cyrene_131.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_50_cyrene_131.wav",
+          "text": "是呀。妄图操纵一切的黑幕，真是不可饶恕。",
+          "confidence": 0.9999998807907104,
+          "duration_seconds": 5.2,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_52_cyrene_101.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_52_cyrene_101.wav",
+          "text": "那位凯撒，真是咄咄逼人…完全不给我们提问的机会。",
+          "confidence": 0.9999862909317017,
+          "duration_seconds": 5.4,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_42_cyrene_139.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_42_cyrene_139.wav",
+          "text": "从走出村子的那一刻起，我们就做好反抗命运的准备了，不是吗？",
+          "confidence": 0.9999847412109375,
+          "duration_seconds": 6.7,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "side4_shitang_cyrene_140.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\side4_shitang_cyrene_140.wav",
+          "text": "确实呢，要是菜单总不更新，客人们很快也会吃腻的。",
+          "confidence": 0.9999258518218994,
+          "duration_seconds": 5.6,
+          "quality_score": 100.0
+        }
+      ]
+    },
+    "fear": {
+      "emotion_name": "惧",
+      "total_samples": 107,
+      "primary": {
+        "audio_file": "chapter4_72_cyrene_281.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_72_cyrene_281.wav",
+        "text": "这个名字里有我，也有她…每一个她。",
+        "confidence": 0.999850869178772,
+        "duration_seconds": 5.6,
+        "quality_score": 99.99
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_50_cyrene_159.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_50_cyrene_159.wav",
+          "text": "无论如何，我们的方向明确了，对吧？",
+          "confidence": 0.9983658194541931,
+          "duration_seconds": 5.1,
+          "quality_score": 99.91
+        },
+        {
+          "audio_file": "chapter4_77_cyrene_101.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_77_cyrene_101.wav",
+          "text": "被铁墓吞没的记忆，回到现实吧。",
+          "confidence": 0.9924761652946472,
+          "duration_seconds": 4.5,
+          "quality_score": 99.58
+        },
+        {
+          "audio_file": "chapter4_73_cyrene_114.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_73_cyrene_114.wav",
+          "text": "不过「记忆的被褥」…还真令人在意呢。",
+          "confidence": 0.9838318824768066,
+          "duration_seconds": 5.8,
+          "quality_score": 99.14
+        },
+        {
+          "audio_file": "chapter4_58_cyrene_135.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_58_cyrene_135.wav",
+          "text": "人和人的相处，真是不可思议呀。",
+          "confidence": 0.9661027193069458,
+          "duration_seconds": 6.5,
+          "quality_score": 98.16
+        }
+      ]
+    },
+    "surprised": {
+      "emotion_name": "惊喜",
+      "total_samples": 59,
+      "primary": {
+        "audio_file": "chapter4_50_cyrene_114.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_50_cyrene_114.wav",
+        "text": "奇怪，没说过吗？嘻，那就当是人家自己的心愿吧！",
+        "confidence": 0.9999978542327881,
+        "duration_seconds": 6.9,
+        "quality_score": 100.0
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_42_cyrene_104.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_42_cyrene_104.wav",
+          "text": "怎么一副难以置信的表情，难道是…想我了？",
+          "confidence": 0.9999953508377075,
+          "duration_seconds": 4.4,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "side4_shitang_cyrene_156.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\side4_shitang_cyrene_156.wav",
+          "text": "哎呀，背叛来得如此决绝，好令人受伤呀……",
+          "confidence": 0.9999469518661499,
+          "duration_seconds": 4.8,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_67_mem_102.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_67_mem_102.wav",
+          "text": "激动人心的「英雄救美」…再度上演！",
+          "confidence": 0.999929666519165,
+          "duration_seconds": 6.4,
+          "quality_score": 100.0
+        },
+        {
+          "audio_file": "chapter4_72_cyrene_191.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_72_cyrene_191.wav",
+          "text": "好奇怪呀，虽然看不见，但人家有种感觉……",
+          "confidence": 0.9998608827590942,
+          "duration_seconds": 6.0,
+          "quality_score": 99.99
+        }
+      ]
+    },
+    "depressed": {
+      "emotion_name": "低落",
+      "total_samples": 5,
+      "primary": {
+        "audio_file": "chapter4_41_cyrene_124.wav",
+        "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_41_cyrene_124.wav",
+        "text": "那梦里，一直有个模糊的声音，似乎在呼唤什么。",
+        "confidence": 0.5995258688926697,
+        "duration_seconds": 5.7,
+        "quality_score": 76.06
+      },
+      "secondary": [
+        {
+          "audio_file": "chapter4_73_cyrene_170.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_73_cyrene_170.wav",
+          "text": "最后，那「憎恨」的烈火也被一阵风拂去……",
+          "confidence": 0.5900784730911255,
+          "duration_seconds": 4.8,
+          "quality_score": 75.59
+        },
+        {
+          "audio_file": "chapter4_55_cyrene_130.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_55_cyrene_130.wav",
+          "text": "因为距离我们分别，真的…过去太久啦。",
+          "confidence": 0.5163165926933289,
+          "duration_seconds": 7.3,
+          "quality_score": 72.25
+        },
+        {
+          "audio_file": "chapter4_77_cyrene_145.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_77_cyrene_145.wav",
+          "text": "话虽如此，要一直走到「记忆」的起点吗？",
+          "confidence": 0.4297808110713959,
+          "duration_seconds": 4.3,
+          "quality_score": 67.26
+        },
+        {
+          "audio_file": "chapter4_75_cyrene_161.wav",
+          "full_path": "I:\\BaiduNetdiskDownload\\ai\\昔涟\\chapter4_75_cyrene_161.wav",
+          "text": "是知晓命运的破碎，仍以破碎拥抱命运，一段渴望被爱，更渴望去爱的旅途。",
+          "confidence": 0.47471511363983154,
+          "duration_seconds": 9.6,
+          "quality_score": 65.89
+        }
+      ]
+    }
+  }
+}
