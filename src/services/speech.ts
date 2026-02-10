@@ -1,9 +1,11 @@
 /**
  * 语音识别服务
- * 提供录音和语音识别功能
+ * 提供录音和语音识别功能，支持百度和讯飞双引擎
  */
 
 import { API_BASE_URL } from '@/lib/constants';
+
+export type SpeechEngine = 'baidu' | 'xunfei';
 
 export interface RecognizeResponse {
   success: boolean;
@@ -11,11 +13,25 @@ export interface RecognizeResponse {
   error?: string;
 }
 
-export interface SpeechConfig {
+export interface BaiduSpeechConfig {
   apiKey: string;
   secretKey: string;
   sampleRate?: number;
 }
+
+export interface XunfeiSpeechConfig {
+  appId: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
+export type SpeechConfig = {
+  engine: 'baidu';
+  baidu: BaiduSpeechConfig;
+} | {
+  engine: 'xunfei';
+  xunfei: XunfeiSpeechConfig;
+};
 
 class SpeechService {
   private mediaRecorder: MediaRecorder | null = null;
@@ -111,28 +127,11 @@ class SpeechService {
       const pcmBuffer = await this.convertWebmToPcm(audioBlob);
       const base64Audio = this.arrayBufferToBase64(pcmBuffer);
 
-      const response = await fetch(`${API_BASE_URL}/api/speech/recognize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          audio_data: base64Audio,
-          format: 'pcm',
-          sample_rate: config.sampleRate || 16000,
-          api_key: config.apiKey,
-          secret_key: config.secretKey,
-        }),
-      });
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: `HTTP error: ${response.status}`,
-        };
+      if (config.engine === 'xunfei') {
+        return await this.recognizeWithXunfei(base64Audio, config.xunfei);
       }
 
-      return await response.json();
+      return await this.recognizeWithBaidu(base64Audio, config.baidu);
     } catch (error) {
       console.error('Recognition failed:', error);
       return {
@@ -140,6 +139,45 @@ class SpeechService {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  }
+
+  private async recognizeWithBaidu(base64Audio: string, config: BaiduSpeechConfig): Promise<RecognizeResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/speech/recognize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_data: base64Audio,
+        format: 'pcm',
+        sample_rate: config.sampleRate || 16000,
+        api_key: config.apiKey,
+        secret_key: config.secretKey,
+      }),
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP error: ${response.status}` };
+    }
+
+    return await response.json();
+  }
+
+  private async recognizeWithXunfei(base64Audio: string, config: XunfeiSpeechConfig): Promise<RecognizeResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/speech/xunfei/recognize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_data: base64Audio,
+        app_id: config.appId,
+        api_key: config.apiKey,
+        api_secret: config.apiSecret,
+      }),
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP error: ${response.status}` };
+    }
+
+    return await response.json();
   }
 
   private arrayBufferToBase64(buffer: ArrayBuffer): string {

@@ -162,18 +162,40 @@ async fn set_subtitle_size(app: tauri::AppHandle, width: f64, height: f64) -> Re
 #[tauri::command]
 async fn set_subtitle_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("subtitle") {
-        // Tauri 2.x 不直接支持窗口透明度，需要通过 CSS 实现
-        // 这里发送事件到前端处理
         window.emit("set-opacity", opacity).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// 将文本复制到系统剪贴板并模拟 Ctrl+V 粘贴到当前焦点窗口
+#[tauri::command]
+async fn clipboard_paste(text: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        use arboard::Clipboard;
+        use enigo::{Enigo, Keyboard, Key, Settings, Direction};
+
+        let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard error: {}", e))?;
+        clipboard.set_text(&text).map_err(|e| format!("Set clipboard error: {}", e))?;
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("Enigo error: {}", e))?;
+        enigo.key(Key::Control, Direction::Press).map_err(|e| format!("Key error: {}", e))?;
+        enigo.key(Key::Unicode('v'), Direction::Click).map_err(|e| format!("Key error: {}", e))?;
+        enigo.key(Key::Control, Direction::Release).map_err(|e| format!("Key error: {}", e))?;
+
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
     // MCP 插件（仅在 debug 模式下启用）
     #[cfg(debug_assertions)]
@@ -199,7 +221,8 @@ pub fn run() {
             get_subtitle_click_through,
             set_subtitle_position,
             set_subtitle_size,
-            set_subtitle_opacity
+            set_subtitle_opacity,
+            clipboard_paste
         ])
         .setup(|app| {
             // 初始化 SSE 广播器（需要先创建，用于 tracing layer）

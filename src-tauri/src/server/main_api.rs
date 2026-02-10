@@ -26,7 +26,7 @@ use crate::api::memory::{
     get_memory_config, update_memory_config, trigger_auto_check, scan_files,
     get_prompt_template, save_prompt_template, reset_prompt_template
 };
-use crate::api::speech::{test_baidu_connection, recognize_speech};
+use crate::api::speech::{test_baidu_connection, recognize_speech, test_xunfei_connection, recognize_xunfei};
 
 /// 健康检查响应
 #[derive(Serialize)]
@@ -105,5 +105,7 @@ pub fn create_router(state: AppState) -> Router {
         // 语音识别 API
         .route("/api/speech/baidu/test", post(test_baidu_connection))
         .route("/api/speech/recognize", post(recognize_speech))
+        .route("/api/speech/xunfei/test", post(test_xunfei_connection))
+        .route("/api/speech/xunfei/recognize", post(recognize_xunfei))
         .with_state(state)
 }

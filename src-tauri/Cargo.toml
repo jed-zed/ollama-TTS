@@ -62,8 +62,17 @@ thiserror = "1.0"
 anyhow = "1.0"
 rand = "0.8"
 
+# WebSocket client (for Xunfei speech recognition)
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+hmac = "0.12"
+sha2 = "0.10"
+url = "2"
+
 # Audio playback
 rodio = { version = "0.19", default-features = false, features = ["wav"] }
 
 # MCP 插件
 tauri-plugin-mcp-gui = { path = "../tauri-plugin-mcp" }
+tauri-plugin-global-shortcut = "2"
+enigo = "0.3"
+arboard = "3"

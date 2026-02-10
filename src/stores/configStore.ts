@@ -124,6 +124,10 @@ const defaultConfig: Config = {
   xunfei_api_secret: '',
   xunfei_default_voice: 'x4_yezi',
 
+  baidu_app_id: '',
+  baidu_api_key: '',
+  baidu_secret_key: '',
+
   char_delay: 30,
   subtitle_font_color: '#ffffff',
   subtitle_bg_color: 'rgba(255,255,255,0.1)',
@@ -134,6 +138,11 @@ const defaultConfig: Config = {
 
   custom_font_colors: {},
   custom_bg_colors: {},
+
+  voice_shortcut_enabled: false,
+  voice_shortcut: 'Ctrl+Shift+,',
+
+  speech_engine: 'baidu',
 
   history_compression: {
     save_data_path: '',

@@ -131,6 +131,10 @@ pub struct Config {
     /// 分句最大 Token 数
     pub indextts_max_tokens: i32,
     
+    // ==================== 全局快捷键配置 ====================
+    pub voice_shortcut_enabled: bool,
+    pub voice_shortcut: String,
+
     // ==================== 历史压缩配置 ====================
     pub history_compression: HistoryCompressionConfig,
     
@@ -220,6 +224,10 @@ impl Default for Config {
             indextts_emo_weight: 0.8,
             indextts_max_tokens: 120,
             
+            // 全局快捷键配置
+            voice_shortcut_enabled: false,
+            voice_shortcut: "Ctrl+Shift+,".to_string(),
+
             // 历史压缩配置
             history_compression: HistoryCompressionConfig::default(),
             

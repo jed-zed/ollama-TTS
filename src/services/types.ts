@@ -108,6 +108,13 @@ export interface Config {
   custom_font_colors?: Record<string, string>;
   custom_bg_colors?: Record<string, string>;
 
+  // 全局快捷键配置
+  voice_shortcut_enabled: boolean;
+  voice_shortcut: string;
+
+  // 语音识别引擎选择
+  speech_engine: 'baidu' | 'xunfei';
+
   // 历史压缩配置
   history_compression: HistoryCompressionConfig;
 }

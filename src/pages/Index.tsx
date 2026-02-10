@@ -5,6 +5,7 @@ import {
   Volume2,
   Settings2,
   Mic,
+  MicOff,
   Send,
   Trash2,
   Save,
@@ -29,8 +30,9 @@ import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStor
 import { useStreamStore, useStreamHistory, useIsStreaming, useStreamContent, useConnectionStatus } from '@/stores/streamStore';
 import { streamChat } from '@/services/stream';
 import { checkBackendHealth } from '@/services/api';
-import { HEALTH_CHECK_INTERVAL_MS } from '@/lib/constants';
+import { HEALTH_CHECK_INTERVAL_MS, API_BASE_URL } from '@/lib/constants';
 import type { ChatMessage } from '@/services/types';
+import { speechService } from '@/services/speech';
 
 /**
  * 服务连接页面（首页）
@@ -42,6 +44,8 @@ const Index = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [backendConnected, setBackendConnected] = useState(false);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [isVoiceRecognizing, setIsVoiceRecognizing] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const config = useConfig();
@@ -131,6 +135,53 @@ const Index = () => {
       handleSendMessage();
     }
   };
+
+  const handleMicToggle = useCallback(async () => {
+    if (isVoiceRecognizing) return;
+
+    if (!isVoiceRecording) {
+      const success = await speechService.startRecording();
+      if (success) {
+        setIsVoiceRecording(true);
+      }
+    } else {
+      setIsVoiceRecording(false);
+      setIsVoiceRecognizing(true);
+
+      try {
+        const audioBlob = await speechService.stopRecording();
+        if (!audioBlob) {
+          setIsVoiceRecognizing(false);
+          return;
+        }
+
+        const cfgResp = await fetch(`${API_BASE_URL}/api/config`);
+        if (!cfgResp.ok) {
+          setIsVoiceRecognizing(false);
+          return;
+        }
+        const cfgResult = await cfgResp.json();
+        const cfgData = cfgResult.data || cfgResult;
+        if (!cfgData.baidu_api_key || !cfgData.baidu_secret_key) {
+          setIsVoiceRecognizing(false);
+          return;
+        }
+
+        const result = await speechService.recognize(audioBlob, {
+          apiKey: cfgData.baidu_api_key,
+          secretKey: cfgData.baidu_secret_key,
+        });
+
+        if (result.success && result.text) {
+          setInputMessage(prev => prev + result.text);
+        }
+      } catch {
+        console.error('语音识别失败');
+      } finally {
+        setIsVoiceRecognizing(false);
+      }
+    }
+  }, [isVoiceRecording, isVoiceRecognizing]);
 
   const handleClearChat = async () => {
     await clearHistory();
@@ -502,8 +553,20 @@ const Index = () => {
                       onKeyDown={handleKeyDown}
                       disabled={isSending}
                     />
-                    <Button size="icon" className="shrink-0 bg-primary hover:bg-primary/90 rounded-full h-10 w-10" disabled>
-                      <Mic className="h-4 w-4" />
+                    <Button
+                      size="icon"
+                      className={`shrink-0 rounded-full h-10 w-10 ${
+                        isVoiceRecording
+                          ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                          : isVoiceRecognizing
+                            ? 'bg-blue-500'
+                            : 'bg-primary hover:bg-primary/90'
+                      }`}
+                      onClick={handleMicToggle}
+                      disabled={isVoiceRecognizing}
+                      title={isVoiceRecording ? '点击停止录音' : '点击开始语音输入'}
+                    >
+                      {isVoiceRecognizing ? <Loader2 className="h-4 w-4 animate-spin" /> : isVoiceRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                     </Button>
                     <Button 
                       size="icon" 
