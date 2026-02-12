@@ -43,7 +43,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
+
+# System proxy detection (reads Windows/macOS/Linux system proxy settings)
+sysproxy = "0.3"
 
 # Base64 encoding
 base64 = "0.22"

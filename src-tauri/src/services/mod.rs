@@ -3,6 +3,7 @@
 //! 提供业务逻辑服务。
 
 pub mod config_store;
+pub mod http_client;
 pub mod llm_client;
 pub mod stream_parser;
 pub mod tts_parser;

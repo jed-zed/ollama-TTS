@@ -10,6 +10,12 @@ use sha2::Sha256;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use futures::{SinkExt, StreamExt};
 use url::form_urlencoded;
+use once_cell::sync::Lazy;
+
+use crate::services::http_client;
+
+/// 模块级共享 HTTP 客户端（复用连接池，避免每次请求都创建新客户端）
+static SPEECH_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| http_client::create_http_client());
 
 #[derive(Debug, Deserialize)]
 pub struct BaiduTokenRequest {
@@ -48,7 +54,7 @@ pub async fn test_baidu_connection(
         req.secret_key
     );
 
-    let client = reqwest::Client::new();
+    let client = &*SPEECH_CLIENT;
     
     match client.post(&url)
         .header("Content-Type", "application/json")
@@ -153,7 +159,7 @@ pub async fn recognize_speech(
         req.secret_key
     );
 
-    let client = reqwest::Client::new();
+    let client = &*SPEECH_CLIENT;
     
     let token_response = match client.post(&token_url)
         .header("Content-Type", "application/json")

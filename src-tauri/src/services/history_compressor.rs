@@ -16,6 +16,7 @@ use serde_json::Value;
 use tracing::{info, warn, error, debug};
 
 use crate::models::config::{HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT, SUMMARY_MERGE_PROMPT};
+use crate::services::http_client;
 
 /// 对话历史分析结果（用于状态检测与阈值判定）
 #[derive(Debug, Clone)]
@@ -163,7 +164,7 @@ impl HistoryCompressor {
             api_url,
             api_key,
             model_name,
-            client: reqwest::Client::new(),
+            client: http_client::create_http_client(),
         }
     }
 

@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, error};
 
+use crate::services::http_client;
+
 /// 假流式模型后缀列表
 const FAKE_STREAM_SUFFIXES: &[&str] = &[
     "-preview", "-stream", "-streaming",
@@ -80,11 +82,7 @@ pub struct LlmResponse {
 impl LlmClient {
     /// 创建新的 LLM 客户端
     pub fn new(api_url: String, api_key: String) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(300))
-            .connect_timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = http_client::create_http_client();
         
         Self {
             client,
