@@ -1,0 +1,184 @@
+# Project Rules (migrated from .trae/rules)
+
+---
+
+## Stack Standards
+
+**Goal**: Unified Tauri/React dev.
+
+### 1. Stack (Strict)
+- **FE**: React 19.2, TS 5.9, Vite 7.2
+- **Desk**: Tauri 2.9 (Rust)
+- **UI**: Tailwind 4.1, shadcn/ui
+- **State**: Zustand 5 (Client), Query 5 (Server)
+- **Form**: RHF 7 + Zod
+
+### 2. Structure
+- `@/*` -> `src/*`
+- `src/components/ui/` (shadcn)
+- `src/lib/utils.ts` (clsx)
+
+### 3. Rules
+- **Comp**: FC+Hooks. Props Interfaces. NO `any`.
+- **Style**: Tailwind ONLY. Use `cn()`. NO CSS files.
+- **Tauri**: `@tauri-apps/api/core` (invoke).
+
+### 4. Best Practices
+- **State**: UI->Zustand, Data->Query.
+- **DRY**: Reuse comps. Read context first.
+
+---
+
+## Tauri Expert
+
+**Goal**: Secure, fast apps.
+
+### 1. Architecture
+- **Split**: FE=UI, Rust=Logic/IO.
+- **No Secrets**: NO tokens in FE.
+
+### 2. IPC & Security
+- **Mode**: Event Push > Polling.
+- **Data**: `ArrayBuffer` for files. NO Base64.
+- **Sec**:
+  - Min `capabilities`.
+  - **Double Validate**: Rust checks ALL inputs.
+  - Strict CSP.
+
+### 3. Perf
+- **Build**: Gzip/Brotli + UPX.
+- **Startup**: Async `setup` + Splash.
+- **Mem**: Rust `Arc`, no JS DOM leaks.
+
+### 4. Dev
+- **Test**: Win/Mac/Linux real devices.
+- **Log**: `tauri-plugin-log`.
+- **Audit**: `cargo audit`.
+
+---
+
+## Code Style
+
+**Goal**: Consistent, side-effect free.
+
+### 1. Immutability (CRITICAL)
+**Rule**: NEVER mutate objects.
+- ❌ `obj.prop = 1`
+- ✅ `return { ...obj, prop: 1 }`
+**Scope**: Redux/Zustand/Props.
+
+### 2. Files
+**Rule**: Many Small > Few Large.
+- **Size**: Soft 200, HARD 800 lines.
+- **Org**: By **Feature**, not Type.
+  - ✅ `features/auth/LoginBtn.tsx`
+
+### 3. Checklist
+- [ ] Fn < 50 lines
+- [ ] Depth < 4
+- [ ] No `console.log`
+- [ ] No hardcoded values
+- [ ] Immutable
+
+---
+
+## Clean Code
+
+**Goal**: Readable, reusable.
+
+### 1. DRY
+- **Search**: Check Utils first.
+- **Extract**: Logic used >2x MUST be a function.
+- **No Copy-Paste**: BANNED.
+
+### 2. Structure
+- **Nesting**: >3 levels BANNED. Use Guard Clauses.
+- **Guard**: Return early to avoid `else`.
+- **SRP**: Split functions >50 lines.
+
+### 3. Semantics
+- **No Magic**: `0`/`1` -> Constants (e.g. `MAX_RETRY`).
+- **Naming**: Intent over Type.
+  - ❌ `data`, `flag`
+  - ✅ `userConfig`, `isReady`
+
+### 4. Legacy
+- **New Code**: Must be clean.
+- **Refactor**: Don't rename old vars unless asked.
+
+---
+
+## Robust Coding
+
+**Goal**: Zero crashes, data integrity.
+
+### 1. Input Defense (MANDATORY)
+**Rule**: Validate ALL inputs at method start.
+- **Nulls**: Check `null/undefined`.
+- **Lists**: Check length.
+- **Range**: Check bounds (e.g. `age>0`).
+*Assume upstream is unsafe.*
+
+### 2. Exceptions
+- **No Empty Catch**: `try{}catch(e){}` is BANNED.
+- **Log**: Include Context ID + Stack Trace.
+- **Fail Fast**: Throw on bad config/conn. NO masking errors.
+
+### 3. Resources
+- **Cleanup**: Close files/conns explicitly.
+- **Syntax**: Use `try-with-resources` / `defer`.
+
+### 4. Edge Cases
+- Handle `0`, `empty`, `pagination end`.
+
+---
+
+## Security Baseline
+
+**Goal**: Zero leaks.
+
+### 1. Pre-Commit (MANDATORY)
+Check:
+- [ ] **Secrets**: NO hardcoded keys.
+- [ ] **Inputs**: Validated.
+- [ ] **Injection**: Param SQL, Escaped HTML.
+- [ ] **Auth**: Checked.
+- [ ] **Logs**: No stack traces.
+
+### 2. Secrets
+- **Rule**: Env Vars ONLY.
+- **Code**:
+  ```ts
+  const k = process.env.KEY;
+  if(!k) throw Error("No Key");
+  ```
+
+---
+
+## Git Workflow
+
+**Goal**: Clean history.
+
+### 1. Commits
+**Fmt**: `<type>: <desc>`
+**Types**: `feat`, `fix`, `refactor`, `docs`, `chore`.
+
+### 2. PRs
+1. **Diff**: Check `git diff [base]...HEAD`.
+2. **Desc**: Add Test Plan.
+3. **Push**: `git push -u`.
+
+### 3. Feature Dev
+1. **Plan**: Check deps.
+2. **TDD Loop**:
+   - 🔴 **RED**: Fail test.
+   - 🟢 **GREEN**: Pass test.
+   - 🔵 **REFACTOR**: Cleanup.
+   - **Cover**: >80% Core Logic.
+3. **Review**: Self-check.
+
+---
+
+## Agent Rule
+
+当有必要时自动调用子智能体。

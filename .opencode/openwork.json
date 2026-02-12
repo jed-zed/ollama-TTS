@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "react",
+    "createdAt": 1770861954153,
+    "preset": "starter"
+  },
+  "authorizedRoots": [
+    "I:\\BaiduNetdiskDownload\\ai\\react"
+  ]
+}

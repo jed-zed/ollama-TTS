@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "openwork",
+  "mcp": {
+    "control-chrome": {
+      "command": [
+        "chrome-devtools-mcp"
+      ],
+      "type": "local"
+    }
+  },
+  "plugin": [
+    "opencode-scheduler"
+  ]
+}
