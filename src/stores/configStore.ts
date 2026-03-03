@@ -133,6 +133,12 @@ const defaultConfig: Config = {
   subtitle_bg_color: 'rgba(255,255,255,0.1)',
   subtitle_opacity: 0.8,
   subtitle_font_size: 24,
+  subtitle_auto_hide: true,
+  subtitle_auto_hide_delay: 5,
+  subtitle_window_x: 100,
+  subtitle_window_y: 100,
+  subtitle_window_width: 800,
+  subtitle_window_height: 200,
 
   subtitle_text_only: false,
 
@@ -201,7 +207,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     saveConfigToStorage(newConfig);
     broadcastConfigUpdate(newConfig);
 
-    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only'];
+    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only', 'subtitle_auto_hide', 'subtitle_auto_hide_delay'];
     if (subtitleKeys.includes(key as string)) {
       emitConfigToOverlay({ [key]: value });
     }

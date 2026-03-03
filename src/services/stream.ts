@@ -94,6 +94,7 @@ export class StreamManager {
           const data = JSON.parse(event.data) as StreamEvent;
           this.onMessage?.(data);
         } catch {
+          this.onError?.('流事件解析失败');
         }
       };
 

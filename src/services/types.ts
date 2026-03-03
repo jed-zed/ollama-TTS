@@ -100,6 +100,12 @@ export interface Config {
   subtitle_bg_color: string;
   subtitle_opacity: number;
   subtitle_font_size: number;
+  subtitle_auto_hide: boolean;
+  subtitle_auto_hide_delay: number;
+  subtitle_window_x: number;
+  subtitle_window_y: number;
+  subtitle_window_width: number;
+  subtitle_window_height: number;
 
   // 纯文字模式（隐藏控件、边框、装饰，只显示文字）
   subtitle_text_only: boolean;

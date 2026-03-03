@@ -133,7 +133,6 @@ const Memory = () => {
       setLocalPromptTemplate(hc.custom_prompt || DEFAULT_PROMPT_TEMPLATE);
       setInitialized(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?.history_compression, initialized]);
 
   // 保存配置

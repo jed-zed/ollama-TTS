@@ -168,6 +168,14 @@ pub struct Config {
     pub subtitle_auto_hide: bool,
     /// 自动隐藏延迟 (ms)
     pub subtitle_auto_hide_delay: i32,
+    /// 字幕窗口 X 坐标
+    pub subtitle_window_x: i32,
+    /// 字幕窗口 Y 坐标
+    pub subtitle_window_y: i32,
+    /// 字幕窗口宽度
+    pub subtitle_window_width: i32,
+    /// 字幕窗口高度
+    pub subtitle_window_height: i32,
     /// 用户自定义字体颜色预设
     pub custom_font_colors: HashMap<String, String>,
     /// 用户自定义背景颜色预设
@@ -264,6 +272,10 @@ impl Default for Config {
             subtitle_typing_speed: 50,
             subtitle_auto_hide: true,
             subtitle_auto_hide_delay: 3000,
+            subtitle_window_x: 100,
+            subtitle_window_y: 100,
+            subtitle_window_width: 800,
+            subtitle_window_height: 200,
             custom_font_colors: HashMap::new(),
             custom_bg_colors: HashMap::new(),
             subtitle_text_only: false,

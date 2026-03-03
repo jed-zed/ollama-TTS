@@ -46,7 +46,9 @@ export function useTypewriter(
   const charDelayRef = useRef(charDelay);
   const isActiveRef = useRef(false);
 
-  charDelayRef.current = charDelay;
+  useEffect(() => {
+    charDelayRef.current = charDelay;
+  }, [charDelay]);
 
   /**
    * 停止动画循环
@@ -127,8 +129,9 @@ export function useTypewriter(
       bufferRef.current = [];
       lastTextRef.current = '';
       lastTimestampRef.current = 0;
-      setIsTyping(false);
-      setDisplayedText('');
+      setTimeout(() => {
+        setDisplayedText('');
+      }, 0);
       return;
     }
 
@@ -137,12 +140,14 @@ export function useTypewriter(
       bufferRef.current = [];
       lastTextRef.current = sourceText;
       lastTimestampRef.current = 0;
-      setDisplayedText('');
-      
+      setTimeout(() => {
+        setDisplayedText('');
+      }, 0);
+
       for (const char of sourceText) {
         bufferRef.current.push(char);
       }
-      
+
       startAnimation();
       return;
     }

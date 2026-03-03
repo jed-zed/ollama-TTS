@@ -11,10 +11,38 @@ import { MAX_HISTORY_SIZE, MIN_CONTENT_LENGTH } from '@/lib/constants';
 
 const HISTORY_STORAGE_KEY = 'stream-history';
 
+const createMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeHistory = (history: StreamMessage[]): StreamMessage[] => {
+  const seenIds = new Set<string>();
+  const dedupedDesc: StreamMessage[] = [];
+
+  for (let index = history.length - 1; index >= 0; index--) {
+    const item = history[index];
+    if (!item || typeof item !== 'object') continue;
+
+    const normalizedId = typeof item.id === 'string' && item.id.trim().length > 0
+      ? item.id
+      : createMessageId();
+
+    if (seenIds.has(normalizedId)) continue;
+    seenIds.add(normalizedId);
+
+    dedupedDesc.push({
+      ...item,
+      id: normalizedId,
+    });
+  }
+
+  return dedupedDesc.reverse().slice(-MAX_HISTORY_SIZE);
+};
+
 const loadHistoryFromStorage = (): StreamMessage[] => {
   try {
     const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? normalizeHistory(parsed as StreamMessage[]) : [];
   } catch {
     return [];
   }
@@ -22,8 +50,9 @@ const loadHistoryFromStorage = (): StreamMessage[] => {
 
 const saveHistoryToStorage = (history: StreamMessage[]) => {
   try {
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(-MAX_HISTORY_SIZE)));
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(normalizeHistory(history)));
   } catch {
+    return;
   }
 };
 
@@ -131,9 +160,13 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   finishStream: () => {
     const state = get();
+    if (!state.isStreaming) {
+      return;
+    }
+
     if (state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
       const message: StreamMessage = {
-        id: `msg_${Date.now()}`,
+        id: createMessageId(),
         content: state.currentContent,
         speaker: state.currentSpeaker ?? undefined,
         emotion: state.currentEmotion ?? undefined,
@@ -208,9 +241,9 @@ export const useStreamStore = create<StreamState>((set, get) => ({
           subtitleWindow.show();
         }
         const newSpeaker = event.data.speaker ?? null;
-        if (state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
+        if (state.isStreaming && state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
           const message: StreamMessage = {
-            id: `msg_${Date.now()}`,
+            id: createMessageId(),
             content: state.currentContent,
             speaker: state.currentSpeaker ?? undefined,
             emotion: state.currentEmotion ?? undefined,

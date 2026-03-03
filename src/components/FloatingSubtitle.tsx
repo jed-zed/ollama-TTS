@@ -143,8 +143,6 @@ const FloatingSubtitleInner: React.FC = () => {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [clickThrough, setClickThrough] = useState(false);
-  const [autoClose, setAutoClose] = useState(true);
-  const [autoCloseDelay, setAutoCloseDelay] = useState(5);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const tauriWindowOpenedRef = useRef(false);
@@ -154,6 +152,8 @@ const FloatingSubtitleInner: React.FC = () => {
   const fontColor = config?.subtitle_font_color ?? '#ffffff';
   const bgColor = config?.subtitle_bg_color ?? 'rgba(255,255,255,0.1)';
   const textOnly = config?.subtitle_text_only ?? false;
+  const autoClose = config?.subtitle_auto_hide ?? true;
+  const autoCloseDelay = config?.subtitle_auto_hide_delay ?? 5;
 
   const [currentTheme, setCurrentTheme] = useState<ThemeKey>('classic');
   const theme = THEMES[currentTheme];
@@ -191,6 +191,8 @@ const FloatingSubtitleInner: React.FC = () => {
               subtitle_bg_color: config.subtitle_bg_color,
               subtitle_font_size: config.subtitle_font_size,
               char_delay: config.char_delay,
+              subtitle_auto_hide: config.subtitle_auto_hide,
+              subtitle_auto_hide_delay: config.subtitle_auto_hide_delay,
             });
           }
         }, 500);
@@ -334,8 +336,8 @@ const FloatingSubtitleInner: React.FC = () => {
   }, [updateConfig]);
 
   const handleAutoCloseDelayChange = useCallback((value: number[]) => {
-    setAutoCloseDelay(value[0]);
-  }, []);
+    updateConfig('subtitle_auto_hide_delay', value[0]);
+  }, [updateConfig]);
 
   const handleClickThroughChange = useCallback(async (checked: boolean) => {
     setClickThrough(checked);
@@ -536,7 +538,7 @@ const FloatingSubtitleInner: React.FC = () => {
               <Checkbox
                 id="auto-close"
                 checked={autoClose}
-                onCheckedChange={(checked) => setAutoClose(checked as boolean)}
+                onCheckedChange={(checked) => updateConfig('subtitle_auto_hide', checked as boolean)}
                 className={`w-3.5 h-3.5 ${theme.checkbox}`}
               />
               <Label htmlFor="auto-close" style={{ color: fontColor, opacity: 0.7 }} className="text-xs cursor-pointer">

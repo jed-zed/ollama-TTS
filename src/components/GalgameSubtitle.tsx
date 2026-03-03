@@ -45,7 +45,6 @@ const GalgameSubtitle = ({
   const streamContent = useStreamContent();
   const isStreaming = useIsStreaming();
 
-  const [autoClose, setAutoClose] = useState(true);
   const [passThrough, setPassThrough] = useState(false);
   const [inputText, setInputText] = useState('');
 
@@ -55,6 +54,7 @@ const GalgameSubtitle = ({
   const fontColor = config?.subtitle_font_color ?? '#ffffff';
   const bgColor = config?.subtitle_bg_color ?? 'rgba(255,255,255,0.1)';
   const textOnly = config?.subtitle_text_only ?? false;
+  const autoClose = config?.subtitle_auto_hide ?? true;
 
   const isShowingHistory = !!selectedHistoryContent;
   const rawStreamText = text || streamContent || "哈......你这家伙，真是有意思呢。竟然能找到这里来，看来我也不能小看你了。";
@@ -194,7 +194,7 @@ const GalgameSubtitle = ({
               <Checkbox
                 id={autoCloseId}
                 checked={autoClose}
-                onCheckedChange={(checked) => setAutoClose(checked as boolean)}
+                onCheckedChange={(checked) => updateConfig('subtitle_auto_hide', checked as boolean)}
                 className="w-3.5 h-3.5 data-[state=checked]:bg-pink-500 data-[state=checked]:border-pink-500"
               />
               <Label htmlFor={autoCloseId} className="text-muted-foreground text-xs cursor-pointer">

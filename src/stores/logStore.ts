@@ -122,7 +122,8 @@ export const useLogStore = create<LogState>((set, get) => ({
       if (response.success && response.data) {
         set({ stats: response.data });
       }
-    } catch {
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : '获取日志统计失败' });
     }
   },
 
@@ -200,6 +201,7 @@ export const useLogStore = create<LogState>((set, get) => ({
           logs: [log, ...state.logs].slice(0, 500),
         }));
       } catch {
+        return;
       }
     };
 

@@ -22,6 +22,30 @@ struct SubtitleState {
     click_through: bool,
 }
 
+const DEFAULT_SUBTITLE_WINDOW_X: i32 = 100;
+const DEFAULT_SUBTITLE_WINDOW_Y: i32 = 100;
+const DEFAULT_SUBTITLE_WINDOW_WIDTH: i32 = 800;
+const DEFAULT_SUBTITLE_WINDOW_HEIGHT: i32 = 200;
+const MIN_SUBTITLE_WINDOW_WIDTH: i32 = 400;
+const MIN_SUBTITLE_WINDOW_HEIGHT: i32 = 120;
+
+fn sanitize_subtitle_window_geometry(x: i32, y: i32, width: i32, height: i32) -> (i32, i32, i32, i32) {
+    let safe_x = if x >= 0 { x } else { DEFAULT_SUBTITLE_WINDOW_X };
+    let safe_y = if y >= 0 { y } else { DEFAULT_SUBTITLE_WINDOW_Y };
+    let safe_width = if width >= MIN_SUBTITLE_WINDOW_WIDTH {
+        width
+    } else {
+        DEFAULT_SUBTITLE_WINDOW_WIDTH
+    };
+    let safe_height = if height >= MIN_SUBTITLE_WINDOW_HEIGHT {
+        height
+    } else {
+        DEFAULT_SUBTITLE_WINDOW_HEIGHT
+    };
+
+    (safe_x, safe_y, safe_width, safe_height)
+}
+
 /// 获取后端 URL
 #[tauri::command]
 fn get_backend_url() -> String {
@@ -56,6 +80,15 @@ async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    let app_state = app.state::<AppState>();
+    let config = app_state.config_store.get();
+    let (window_x, window_y, window_width, window_height) = sanitize_subtitle_window_geometry(
+        config.subtitle_window_x,
+        config.subtitle_window_y,
+        config.subtitle_window_width,
+        config.subtitle_window_height,
+    );
+
     // 创建新的字幕窗口
     let _window = WebviewWindowBuilder::new(
         &app,
@@ -63,8 +96,8 @@ async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
         WebviewUrl::App("/#/overlay".into())
     )
     .title("字幕")
-    .inner_size(800.0, 200.0)
-    .position(100.0, 100.0)
+    .inner_size(window_width as f64, window_height as f64)
+    .position(window_x as f64, window_y as f64)
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
@@ -74,7 +107,13 @@ async fn create_subtitle_window(app: tauri::AppHandle) -> Result<(), String> {
     .build()
     .map_err(|e| format!("Failed to create subtitle window: {}", e))?;
 
-    log::info!("Subtitle window created");
+    log::info!(
+        "Subtitle window created with geometry: x={}, y={}, width={}, height={}",
+        window_x,
+        window_y,
+        window_width,
+        window_height
+    );
     Ok(())
 }
 

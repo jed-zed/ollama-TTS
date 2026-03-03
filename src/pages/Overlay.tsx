@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { subtitleWindow, isTauri } from '@/services/tauri';
+import { useConfigStore } from '@/stores/configStore';
 import { speechService } from '@/services/speech';
 import { API_BASE_URL, SCROLL_THRESHOLD } from '@/lib/constants';
 import { toast } from 'sonner';
@@ -52,6 +53,8 @@ interface SubtitleConfig {
   bgColor: string;
   charDelay: number;
   textOnly: boolean;
+  autoHide: boolean;
+  autoHideDelay: number;
 }
 
 const DEFAULT_CONFIG: SubtitleConfig = {
@@ -61,6 +64,8 @@ const DEFAULT_CONFIG: SubtitleConfig = {
   bgColor: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
   charDelay: 30,
   textOnly: false,
+  autoHide: true,
+  autoHideDelay: 5,
 };
 
 const FONT_COLORS = [
@@ -71,7 +76,38 @@ const FONT_COLORS = [
   { name: '黄色', value: '#eab308' },
 ];
 
+const DEFAULT_WINDOW_GEOMETRY = {
+  x: 100,
+  y: 100,
+  width: 800,
+  height: 200,
+};
+
+const WINDOW_MIN_WIDTH = 400;
+const WINDOW_MIN_HEIGHT = 120;
+const WINDOW_GEOMETRY_SAVE_DELAY_MS = 300;
+
+const sanitizeWindowGeometry = (geometry: { x: number; y: number; width: number; height: number }) => {
+  const width = Number.isFinite(geometry.width) && geometry.width >= WINDOW_MIN_WIDTH
+    ? Math.round(geometry.width)
+    : DEFAULT_WINDOW_GEOMETRY.width;
+  const height = Number.isFinite(geometry.height) && geometry.height >= WINDOW_MIN_HEIGHT
+    ? Math.round(geometry.height)
+    : DEFAULT_WINDOW_GEOMETRY.height;
+  const x = Number.isFinite(geometry.x) && geometry.x >= 0
+    ? Math.round(geometry.x)
+    : DEFAULT_WINDOW_GEOMETRY.x;
+  const y = Number.isFinite(geometry.y) && geometry.y >= 0
+    ? Math.round(geometry.y)
+    : DEFAULT_WINDOW_GEOMETRY.y;
+
+  return { x, y, width, height };
+};
+
 const Overlay: React.FC = () => {
+  const updateConfig = useConfigStore((state) => state.updateConfig);
+  const updateConfigBatch = useConfigStore((state) => state.updateConfigBatch);
+
   const [config, setConfig] = useState<SubtitleConfig>(() => {
     try {
       const stored = localStorage.getItem('subtitle-overlay-config');
@@ -87,8 +123,6 @@ const Overlay: React.FC = () => {
   const [history, setHistory] = useState<Array<{ id: string; content: string; speaker?: string; timestamp: number }>>([]);
 
   const [clickThrough, setClickThrough] = useState(false);
-  const [autoClose, setAutoClose] = useState(true);
-  const [autoCloseDelay, setAutoCloseDelay] = useState(5);
   const [autoShow, setAutoShow] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
@@ -101,8 +135,18 @@ const Overlay: React.FC = () => {
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
-  
-  
+  const currentWindowRef = useRef<{
+    innerPosition: () => Promise<{ x: number; y: number }>;
+    innerSize: () => Promise<{ width: number; height: number }>;
+    onMoved: (handler: () => void) => Promise<() => void>;
+    onResized: (handler: () => void) => Promise<() => void>;
+  } | null>(null);
+  const geometrySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const geometryRef = useRef(DEFAULT_WINDOW_GEOMETRY);
+  const handleCloseRef = useRef<() => void>(() => {});
+
+  const autoClose = config.autoHide;
+  const autoCloseDelay = config.autoHideDelay;
 
   const { displayedText, isTyping, reset: resetTypewriter } = useTypewriter(streamContent, {
     charDelay: config.charDelay,
@@ -170,6 +214,12 @@ const Overlay: React.FC = () => {
         textOnly: typeof newConfig.subtitle_text_only === 'boolean'
           ? newConfig.subtitle_text_only
           : prev.textOnly,
+        autoHide: typeof newConfig.subtitle_auto_hide === 'boolean'
+          ? newConfig.subtitle_auto_hide
+          : prev.autoHide,
+        autoHideDelay: typeof newConfig.subtitle_auto_hide_delay === 'number'
+          ? newConfig.subtitle_auto_hide_delay
+          : prev.autoHideDelay,
       }));
     }).then(unsub => unsubscribers.push(unsub));
 
@@ -195,7 +245,7 @@ const Overlay: React.FC = () => {
     }).then(unsub => unsubscribers.push(unsub));
 
     subtitleWindow.onHide(() => {
-      handleClose();
+      handleCloseRef.current();
     }).then(unsub => unsubscribers.push(unsub));
 
     return () => {
@@ -217,7 +267,7 @@ const Overlay: React.FC = () => {
     
     if (!isStreaming && !isTyping && streamContent && autoClose && !isUserSent) {
       autoCloseTimerRef.current = setTimeout(() => {
-        handleClose();
+        handleCloseRef.current();
       }, autoCloseDelay * 1000);
     }
     
@@ -243,7 +293,7 @@ const Overlay: React.FC = () => {
     if (!scrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
     isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD;
-  }, [SCROLL_THRESHOLD]);
+  }, []);
 
   const selectedHistoryContent = useMemo(() => {
     if (!selectedHistoryId) return null;
@@ -329,11 +379,141 @@ const Overlay: React.FC = () => {
     };
   }, [config.textOnly, config.opacity, config.bgColor]);
 
+  const saveWindowGeometry = useCallback(async () => {
+    if (!isTauri() || !currentWindowRef.current) return;
+
+    try {
+      const [position, size] = await Promise.all([
+        currentWindowRef.current.innerPosition(),
+        currentWindowRef.current.innerSize(),
+      ]);
+
+      const normalized = sanitizeWindowGeometry({
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+      });
+
+      const previous = geometryRef.current;
+      const hasChanged = previous.x !== normalized.x
+        || previous.y !== normalized.y
+        || previous.width !== normalized.width
+        || previous.height !== normalized.height;
+
+      if (!hasChanged) return;
+
+      geometryRef.current = normalized;
+      await updateConfigBatch({
+        subtitle_window_x: normalized.x,
+        subtitle_window_y: normalized.y,
+        subtitle_window_width: normalized.width,
+        subtitle_window_height: normalized.height,
+      });
+    } catch (error) {
+      console.warn('[Overlay] Failed to save window geometry:', error);
+    }
+  }, [updateConfigBatch]);
+
   const handleClose = useCallback(async () => {
+    await saveWindowGeometry();
     if (isTauri()) {
       await subtitleWindow.hide();
     }
-  }, []);
+  }, [saveWindowGeometry]);
+
+  useEffect(() => {
+    handleCloseRef.current = () => {
+      handleClose();
+    };
+  }, [handleClose]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlistenMoved: (() => void) | null = null;
+    let unlistenResized: (() => void) | null = null;
+    let canceled = false;
+
+    const applyWindowGeometry = async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const currentWindow = getCurrentWindow();
+        currentWindowRef.current = currentWindow;
+
+        let configData: Record<string, unknown> = {};
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/config`);
+          if (response.ok) {
+            const result = await response.json();
+            configData = (result.data || result) as Record<string, unknown>;
+          }
+        } catch (error) {
+          console.warn('[Overlay] Failed to load geometry config:', error);
+        }
+
+        if (canceled) return;
+
+        const sourceGeometry = {
+          x: typeof configData.subtitle_window_x === 'number' ? configData.subtitle_window_x : DEFAULT_WINDOW_GEOMETRY.x,
+          y: typeof configData.subtitle_window_y === 'number' ? configData.subtitle_window_y : DEFAULT_WINDOW_GEOMETRY.y,
+          width: typeof configData.subtitle_window_width === 'number' ? configData.subtitle_window_width : DEFAULT_WINDOW_GEOMETRY.width,
+          height: typeof configData.subtitle_window_height === 'number' ? configData.subtitle_window_height : DEFAULT_WINDOW_GEOMETRY.height,
+        };
+
+        const normalizedGeometry = sanitizeWindowGeometry(sourceGeometry);
+        geometryRef.current = normalizedGeometry;
+
+        await subtitleWindow.setSize(normalizedGeometry.width, normalizedGeometry.height);
+        await subtitleWindow.setPosition(normalizedGeometry.x, normalizedGeometry.y);
+
+        const hasInvalidGeometry = sourceGeometry.x !== normalizedGeometry.x
+          || sourceGeometry.y !== normalizedGeometry.y
+          || sourceGeometry.width !== normalizedGeometry.width
+          || sourceGeometry.height !== normalizedGeometry.height;
+
+        if (hasInvalidGeometry) {
+          await updateConfigBatch({
+            subtitle_window_x: normalizedGeometry.x,
+            subtitle_window_y: normalizedGeometry.y,
+            subtitle_window_width: normalizedGeometry.width,
+            subtitle_window_height: normalizedGeometry.height,
+          });
+        }
+
+        const scheduleGeometrySave = () => {
+          if (geometrySaveTimerRef.current) {
+            clearTimeout(geometrySaveTimerRef.current);
+          }
+          geometrySaveTimerRef.current = setTimeout(() => {
+            saveWindowGeometry();
+          }, WINDOW_GEOMETRY_SAVE_DELAY_MS);
+        };
+
+        unlistenMoved = await currentWindow.onMoved(scheduleGeometrySave);
+        unlistenResized = await currentWindow.onResized(scheduleGeometrySave);
+      } catch (error) {
+        console.warn('[Overlay] Failed to initialize window geometry:', error);
+      }
+    };
+
+    applyWindowGeometry();
+
+    return () => {
+      canceled = true;
+      currentWindowRef.current = null;
+      if (geometrySaveTimerRef.current) {
+        clearTimeout(geometrySaveTimerRef.current);
+        geometrySaveTimerRef.current = null;
+      }
+      if (unlistenMoved) {
+        unlistenMoved();
+      }
+      if (unlistenResized) {
+        unlistenResized();
+      }
+    };
+  }, [saveWindowGeometry, updateConfigBatch]);
 
   const handleSend = useCallback(() => {
     if (inputText.trim()) {
@@ -404,7 +584,9 @@ const Overlay: React.FC = () => {
 
   const handleResetDefaults = useCallback(() => {
     setConfig(DEFAULT_CONFIG);
-  }, []);
+    updateConfig('subtitle_auto_hide', DEFAULT_CONFIG.autoHide);
+    updateConfig('subtitle_auto_hide_delay', DEFAULT_CONFIG.autoHideDelay);
+  }, [updateConfig]);
 
   return (
     <div
@@ -481,16 +663,25 @@ const Overlay: React.FC = () => {
           </div>
 
           {/* 自动关闭 */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <Checkbox
               id="auto-close"
               checked={autoClose}
-              onCheckedChange={(checked) => setAutoClose(checked as boolean)}
+              onCheckedChange={(checked) => {
+                const enabled = checked as boolean;
+                setConfig(prev => ({ ...prev, autoHide: enabled }));
+                updateConfig('subtitle_auto_hide', enabled);
+              }}
               className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
             />
+            <Label htmlFor="auto-close" className="text-xs opacity-80 cursor-pointer select-none">自动隐藏</Label>
             <Slider 
               value={[autoCloseDelay]} 
-              onValueChange={(v) => setAutoCloseDelay(v[0])} 
+              onValueChange={(v) => {
+                const delay = v[0];
+                setConfig(prev => ({ ...prev, autoHideDelay: delay }));
+                updateConfig('subtitle_auto_hide_delay', delay);
+              }} 
               max={30} min={1} step={1} 
               className="w-10" 
               disabled={!autoClose}

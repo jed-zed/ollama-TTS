@@ -1,4 +1,4 @@
-import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useId, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Eye, EyeOff, LayoutTemplate, Eraser, Palette, AppWindow, Type, Zap, ScrollText, Loader2, RotateCcw, History, Save, X, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -97,15 +97,13 @@ const Subtitles = () => {
   const loadHistory = useStreamStore((state) => state.loadHistory);
   const showSubtitle = useStreamStore((state) => state.showSubtitle);
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
-  const setContent = useStreamStore((state) => state.setContent);
 
   // 本地 UI 状态
-  const [autoCloseDelay, setAutoCloseDelay] = useState([5]);
   const [previewMode, setPreviewMode] = useState('subtitle');
   const [mousePassThrough, setMousePassThrough] = useState(false);
   const [autoShow, setAutoShow] = useState(true);
-  const [autoClose, setAutoClose] = useState(true);
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string>('');
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const latestHistoryIdRef = useRef<string | null>(null);
 
   // 保存自定义颜色弹窗状态
   const [saveColorDialogOpen, setSaveColorDialogOpen] = useState(false);
@@ -126,17 +124,55 @@ const Subtitles = () => {
     }
   }, [mousePassThrough]);
 
+  const historyOptions = useMemo(() => {
+    return history
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => {
+        const timeDiff = (b.item.timestamp ?? 0) - (a.item.timestamp ?? 0);
+        if (timeDiff !== 0) return timeDiff;
+        return b.index - a.index;
+      })
+      .map(({ item }) => item);
+  }, [history]);
+
   // 处理历史记录选择
   const handleHistorySelect = useCallback((historyId: string) => {
     setSelectedHistoryId(historyId);
   }, []);
 
+  useEffect(() => {
+    if (historyOptions.length === 0) {
+      latestHistoryIdRef.current = null;
+      setSelectedHistoryId(null);
+      return;
+    }
+
+    const latestHistoryId = historyOptions[0].id;
+    if (!latestHistoryIdRef.current) {
+      latestHistoryIdRef.current = latestHistoryId;
+      setSelectedHistoryId(latestHistoryId);
+      return;
+    }
+
+    if (latestHistoryIdRef.current !== latestHistoryId) {
+      latestHistoryIdRef.current = latestHistoryId;
+      setSelectedHistoryId(latestHistoryId);
+      return;
+    }
+
+    setSelectedHistoryId((prev) => {
+      if (!prev) return latestHistoryId;
+      const exists = historyOptions.some((item) => item.id === prev);
+      return exists ? prev : latestHistoryId;
+    });
+  }, [historyOptions]);
+
   // 获取选中的历史记录内容
   const selectedHistoryContent = useMemo(() => {
     if (!selectedHistoryId) return null;
-    const item = history.find(h => h.id === selectedHistoryId);
+    const item = historyOptions.find((h) => h.id === selectedHistoryId);
     return item?.content ?? null;
-  }, [selectedHistoryId, history]);
+  }, [selectedHistoryId, historyOptions]);
 
   // 流式窗口的打字机效果 - 只对当前流式内容使用，历史记录直接显示
   const charDelay = config?.char_delay ?? 30;
@@ -272,6 +308,8 @@ const Subtitles = () => {
   const opacity = Math.round((config?.subtitle_opacity ?? 0.9) * 100);
   const fontSize = config?.subtitle_font_size ?? 18;
   const speed = config?.char_delay ?? 30;
+  const autoClose = config?.subtitle_auto_hide ?? true;
+  const autoCloseDelay = [config?.subtitle_auto_hide_delay ?? 5];
 
   return (
     <div className="h-full flex flex-col gap-6 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-4 motion-safe:duration-500">
@@ -329,18 +367,18 @@ const Subtitles = () => {
                     <History className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
                     历史记录
                   </Label>
-                  <Select value={selectedHistoryId} onValueChange={handleHistorySelect}>
+                  <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder={history.length > 0 ? "选择历史记录查看" : "暂无历史记录"} />
+                      <SelectValue placeholder={historyOptions.length > 0 ? "选择历史记录查看" : "暂无历史记录"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {history.length === 0 ? (
+                      {historyOptions.length === 0 ? (
                         <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
                       ) : (
-                        history.map((item, index) => (
+                        historyOptions.map((item, index) => (
                           <SelectItem key={item.id} value={item.id}>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">#{history.length - index}</span>
+                              <span className="text-xs text-muted-foreground">#{index + 1}</span>
                               <span className="truncate max-w-[180px]">
                                 {item.content.slice(0, 30)}{item.content.length > 30 ? '...' : ''}
                               </span>
@@ -350,9 +388,9 @@ const Subtitles = () => {
                       )}
                     </SelectContent>
                   </Select>
-                  {history.length > 0 && (
+                  {historyOptions.length > 0 && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      共 {history.length} 条记录，选择后可在字幕窗口中查看
+                      共 {historyOptions.length} 条记录，选择后可在字幕窗口中查看
                     </p>
                   )}
                 </div>
@@ -565,17 +603,18 @@ const Subtitles = () => {
                     <div className="flex items-center gap-2">
                       <Slider
                         value={autoCloseDelay}
-                        onValueChange={setAutoCloseDelay}
+                        onValueChange={(value) => updateConfig('subtitle_auto_hide_delay', value[0])}
                         min={1}
                         max={30}
                         step={1}
                         className="w-20"
                         aria-label="自动关闭延迟"
+                        disabled={!autoClose}
                       />
                       <Switch
                         id={autoCloseId}
                         checked={autoClose}
-                        onCheckedChange={setAutoClose}
+                        onCheckedChange={(checked) => updateConfig('subtitle_auto_hide', checked)}
                         aria-describedby={`${autoCloseId}-desc`}
                       />
                     </div>
@@ -683,19 +722,19 @@ const Subtitles = () => {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Select value={selectedHistoryId} onValueChange={handleHistorySelect}>
+                            <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
                               <SelectTrigger className="h-7 w-[140px] text-xs">
                                 <ScrollText className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
-                                <SelectValue placeholder={history.length > 0 ? `历史(${history.length})` : "暂无历史记录"} />
+                                <SelectValue placeholder={historyOptions.length > 0 ? `历史(${historyOptions.length})` : "暂无历史记录"} />
                               </SelectTrigger>
                               <SelectContent>
-                                {history.length === 0 ? (
+                                {historyOptions.length === 0 ? (
                                   <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
                                 ) : (
-                                  history.map((item, index) => (
+                                  historyOptions.map((item, index) => (
                                     <SelectItem key={item.id} value={item.id}>
                                       <div className="flex items-center gap-2">
-                                        <span className="text-xs text-muted-foreground">#{history.length - index}</span>
+                                        <span className="text-xs text-muted-foreground">#{index + 1}</span>
                                         <span className="truncate max-w-[120px]">
                                           {item.content.slice(0, 20)}{item.content.length > 20 ? '...' : ''}
                                         </span>
@@ -731,7 +770,7 @@ const Subtitles = () => {
                                     <span className="text-xs text-muted-foreground">📜 查看历史记录</span>
                                     <button 
                                       className="text-xs text-pink-500 hover:text-pink-600"
-                                      onClick={() => setSelectedHistoryId('')}
+                                      onClick={() => setSelectedHistoryId(null)}
                                     >
                                       返回当前
                                     </button>
