@@ -133,6 +133,7 @@ const defaultConfig: Config = {
   subtitle_bg_color: 'rgba(255,255,255,0.1)',
   subtitle_opacity: 0.8,
   subtitle_font_size: 24,
+  subtitle_auto_show: true,
   subtitle_auto_hide: true,
   subtitle_auto_hide_delay: 5,
   subtitle_window_x: 100,
@@ -151,6 +152,13 @@ const defaultConfig: Config = {
   speech_engine: 'baidu',
 
   paste_mode: 'direct',
+
+  antigravity_bridge_enabled: false,
+  antigravity_include_thinking: false,
+  antigravity_window_title: 'Antigravity',
+  antigravity_timeout_ms: 60000,
+  antigravity_max_retries: 0,
+  antigravity_pending_submit_fallback_enabled: false,
 
   fallback_model_enabled: false,
   fallback_preset_id: '',
@@ -175,13 +183,13 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
 
   loadConfig: async () => {
     const storedConfig = getStoredConfig();
-    
+
     if (storedConfig) {
       set({ config: storedConfig, isLoading: false });
     } else {
       set({ isLoading: true, error: null });
     }
-    
+
     const response = await configService.getConfig();
 
     if (response.success && response.data) {
@@ -207,24 +215,24 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     saveConfigToStorage(newConfig);
     broadcastConfigUpdate(newConfig);
 
-    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only', 'subtitle_auto_hide', 'subtitle_auto_hide_delay'];
+    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only', 'subtitle_auto_show', 'subtitle_auto_hide', 'subtitle_auto_hide_delay'];
     if (subtitleKeys.includes(key as string)) {
       emitConfigToOverlay({ [key]: value });
     }
 
     pendingUpdates.set(key as string, value);
-    
+
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
-    
+
     debounceTimer = setTimeout(async () => {
       const updates: Partial<Config> = {};
       pendingUpdates.forEach((v, k) => {
         (updates as Record<string, unknown>)[k] = v;
       });
       pendingUpdates.clear();
-      
+
       const response = await configService.updateConfig(updates);
       if (!response.success) {
         set({ error: response.error });
@@ -322,7 +330,7 @@ if (typeof window !== 'undefined') {
     if (config) {
       saveConfigToStorage(config);
     }
-    
+
     if (pendingUpdates.size > 0) {
       const updates: Partial<Config> = {};
       pendingUpdates.forEach((v, k) => {

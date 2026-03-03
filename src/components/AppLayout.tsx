@@ -74,6 +74,7 @@ const AppLayout = () => {
             <div>
               <h1 className="font-bold text-lg leading-none tracking-tight">O2O Adapter</h1>
               <p className="text-xs text-muted-foreground mt-1">Ollama to OpenAI</p>
+              <p className="text-xs text-muted-foreground mt-1">作者：杰</p>
             </div>
           </div>
 

@@ -14,6 +14,7 @@ pub mod audio_player;
 pub mod character_manager;
 pub mod history_compressor;
 pub mod log_layer;
+pub mod antigravity_bridge;
 
 pub use config_store::ConfigStore;
 pub use llm_client::LlmClient;
@@ -26,3 +27,4 @@ pub use audio_player::{TTSPlayer, TTSManager, PlayerStatus};
 pub use character_manager::CharacterManager;
 pub use history_compressor::HistoryCompressor;
 pub use log_layer::BroadcasterLayer;
+pub use antigravity_bridge::AntigravityBridge;

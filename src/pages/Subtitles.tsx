@@ -101,7 +101,6 @@ const Subtitles = () => {
   // 本地 UI 状态
   const [previewMode, setPreviewMode] = useState('subtitle');
   const [mousePassThrough, setMousePassThrough] = useState(false);
-  const [autoShow, setAutoShow] = useState(true);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const latestHistoryIdRef = useRef<string | null>(null);
 
@@ -308,6 +307,7 @@ const Subtitles = () => {
   const opacity = Math.round((config?.subtitle_opacity ?? 0.9) * 100);
   const fontSize = config?.subtitle_font_size ?? 18;
   const speed = config?.char_delay ?? 30;
+  const autoShow = config?.subtitle_auto_show ?? true;
   const autoClose = config?.subtitle_auto_hide ?? true;
   const autoCloseDelay = [config?.subtitle_auto_hide_delay ?? 5];
 
@@ -334,7 +334,7 @@ const Subtitles = () => {
                    <Button
                     variant="outline"
                     className="w-full shadow-sm hover:bg-pink-50 hover:text-pink-600 hover:border-pink-200"
-                    onClick={showSubtitle}
+                    onClick={() => showSubtitle(true)}
                   >
                     <Eye className="w-4 h-4 mr-2" aria-hidden="true" /> 显示字幕
                   </Button>
@@ -643,7 +643,7 @@ const Subtitles = () => {
                     <Switch
                       id={autoShowId}
                       checked={autoShow}
-                      onCheckedChange={setAutoShow}
+                      onCheckedChange={(checked) => updateConfig('subtitle_auto_show', checked)}
                       aria-describedby={`${autoShowId}-desc`}
                     />
                  </div>

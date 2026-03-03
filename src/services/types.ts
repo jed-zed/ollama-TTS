@@ -100,6 +100,7 @@ export interface Config {
   subtitle_bg_color: string;
   subtitle_opacity: number;
   subtitle_font_size: number;
+  subtitle_auto_show: boolean;
   subtitle_auto_hide: boolean;
   subtitle_auto_hide_delay: number;
   subtitle_window_x: number;
@@ -123,6 +124,13 @@ export interface Config {
 
   // 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
   paste_mode: 'direct' | 'ahk';
+
+  antigravity_bridge_enabled: boolean;
+  antigravity_include_thinking: boolean;
+  antigravity_window_title: string;
+  antigravity_timeout_ms: number;
+  antigravity_max_retries: number;
+  antigravity_pending_submit_fallback_enabled: boolean;
 
   // 辅助模型配置（双重检查版）
   fallback_model_enabled?: boolean;

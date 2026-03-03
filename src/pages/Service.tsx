@@ -313,7 +313,7 @@ const Service = () => {
     value: string
   ) => {
     const currentPreset = config?.current_api_preset || 'custom';
-    
+
     if (currentPreset === 'custom') {
       // 自定义预设：同时保存到 api_* 和 custom_api_*
       const updates: Record<string, unknown> = {
@@ -327,7 +327,7 @@ const Service = () => {
       // 其他预设：保存到 api_* 和 preset_configs
       const currentPresetConfigs = config?.preset_configs || {};
       const currentConfig = currentPresetConfigs[currentPreset] || { api_url: '', api_key: '', model_name: '' };
-      
+
       const updates: Record<string, unknown> = {
         [field]: value,
         preset_configs: {
@@ -338,7 +338,7 @@ const Service = () => {
           },
         },
       };
-      
+
       await updateConfigBatch(updates);
     }
   }, [config, updateConfigBatch]);
@@ -389,30 +389,26 @@ const Service = () => {
         </div>
         <div className="flex gap-3">
           {/* API 状态徽章 */}
-          <Badge variant="outline" className={`px-3 py-1.5 ${
-            config?.api_url
+          <Badge variant="outline" className={`px-3 py-1.5 ${config?.api_url
               ? 'border-green-300 bg-green-50 text-green-600'
               : 'border-orange-300 bg-orange-50 text-orange-600'
-          }`}>
-            <div className={`w-2 h-2 rounded-full mr-2 ${
-              config?.api_url ? 'bg-green-500 animate-pulse' : 'bg-orange-500'
-            }`} />
+            }`}>
+            <div className={`w-2 h-2 rounded-full mr-2 ${config?.api_url ? 'bg-green-500 animate-pulse' : 'bg-orange-500'
+              }`} />
             {config?.api_url ? 'API 已配置' : 'API 未配置'}
           </Badge>
 
           {/* TTS 状态徽章 */}
-          <Badge variant="outline" className={`px-3 py-1.5 ${
-            config?.tts_enabled
+          <Badge variant="outline" className={`px-3 py-1.5 ${config?.tts_enabled
               ? isPlaying
                 ? 'border-green-300 bg-green-50 text-green-600'
                 : 'border-purple-300 bg-purple-50 text-purple-600'
               : 'border-gray-300 bg-gray-50 text-gray-600'
-          }`}>
-            <div className={`w-2 h-2 rounded-full mr-2 ${
-              config?.tts_enabled
+            }`}>
+            <div className={`w-2 h-2 rounded-full mr-2 ${config?.tts_enabled
                 ? isPlaying ? 'bg-green-500 animate-pulse' : 'bg-purple-500'
                 : 'bg-gray-400'
-            }`} />
+              }`} />
             {config?.tts_enabled
               ? isPlaying ? 'TTS 播放中' : 'TTS 待机'
               : 'TTS 已关闭'
@@ -434,11 +430,10 @@ const Service = () => {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${
-                  proxyStatus === 'running'
+                <div className={`p-2 rounded-lg ${proxyStatus === 'running'
                     ? 'bg-green-100 text-green-600'
                     : 'bg-gray-100 text-gray-600'
-                }`}>
+                  }`}>
                   <Network className="h-5 w-5" />
                 </div>
                 <div>
@@ -454,9 +449,8 @@ const Service = () => {
                     ? 'border-green-300 bg-green-50 text-green-600'
                     : 'border-gray-300 bg-gray-50 text-gray-600'
                 }>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${
-                    proxyStatus === 'running' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                  }`} />
+                  <div className={`w-2 h-2 rounded-full mr-2 ${proxyStatus === 'running' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+                    }`} />
                   {proxyStatus === 'running' ? '运行中 :11434' : '已停止'}
                 </Badge>
 
@@ -464,11 +458,10 @@ const Service = () => {
                   size="sm"
                   onClick={proxyStatus === 'running' ? handleStopProxy : handleStartProxy}
                   disabled={isProxyOperating}
-                  className={`h-8 text-white ${
-                    proxyStatus === 'running'
+                  className={`h-8 text-white ${proxyStatus === 'running'
                       ? 'bg-red-600 hover:bg-red-700'
                       : 'bg-green-600 hover:bg-green-700'
-                  }`}
+                    }`}
                 >
                   {isProxyOperating ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -652,11 +645,10 @@ const Service = () => {
               <Label>选择引擎</Label>
               <div className="flex gap-3">
                 <Button
-                  className={`flex-1 h-11 ${
-                    config?.tts_engine === 'gpt_sovits'
+                  className={`flex-1 h-11 ${config?.tts_engine === 'gpt_sovits'
                       ? 'bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-md'
                       : 'bg-white/50 text-muted-foreground hover:bg-white/80'
-                  }`}
+                    }`}
                   onClick={() => updateConfig('tts_engine', 'gpt_sovits')}
                 >
                   <Settings2 className="mr-2 h-4 w-4" />
@@ -758,6 +750,93 @@ const Service = () => {
               />
             </div>
           </CardContent>
+        </Card>
+
+        <Card className="glass border-none shadow-custom col-span-2">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600">
+                  <Network className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle>Antigravity 自动化桥接</CardTitle>
+                  <CardDescription>开启后将不再走 API，改为 UI 自动化桥接</CardDescription>
+                </div>
+              </div>
+              <Switch
+                checked={config?.antigravity_bridge_enabled || false}
+                onCheckedChange={(checked) => updateConfig('antigravity_bridge_enabled', checked)}
+                className="data-[state=checked]:bg-indigo-500"
+              />
+            </div>
+          </CardHeader>
+          {config?.antigravity_bridge_enabled && (
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>窗口标题关键字</Label>
+                <Input
+                  value={config?.antigravity_window_title || 'Antigravity'}
+                  onChange={(e) => updateConfig('antigravity_window_title', e.target.value)}
+                  className="bg-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>桥接超时（毫秒）</Label>
+                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_timeout_ms ?? 60000} ms</span>
+                </div>
+                <Slider
+                  value={[config?.antigravity_timeout_ms ?? 60000]}
+                  onValueChange={([value]) => updateConfig('antigravity_timeout_ms', value)}
+                  min={5000}
+                  max={120000}
+                  step={1000}
+                  className="w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>失败重试次数</Label>
+                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_max_retries ?? 0} 次</span>
+                </div>
+                <Slider
+                  value={[config?.antigravity_max_retries ?? 0]}
+                  onValueChange={([value]) => updateConfig('antigravity_max_retries', value)}
+                  min={0}
+                  max={3}
+                  step={1}
+                  className="w-full"
+                />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
+                <div className="space-y-0.5">
+                  <Label>启用 pending/submit 显式降级</Label>
+                  <p className="text-xs text-muted-foreground">仅在内置 LS 桥接失败后，允许通过 /api/bridge/pending 与 /api/bridge/submit 回填。</p>
+                </div>
+                <Switch
+                  checked={config?.antigravity_pending_submit_fallback_enabled || false}
+                  onCheckedChange={(checked) => updateConfig('antigravity_pending_submit_fallback_enabled', checked)}
+                  className="data-[state=checked]:bg-indigo-500"
+                />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
+                <div className="space-y-0.5">
+                  <Label>返回 AI 思考链</Label>
+                  <p className="text-xs text-muted-foreground">开启后回复中将包含 AI 的思考过程（用 &lt;thinking&gt; 标签包裹），关闭则只返回正文。</p>
+                </div>
+                <Switch
+                  checked={config?.antigravity_include_thinking || false}
+                  onCheckedChange={(checked) => updateConfig('antigravity_include_thinking', checked)}
+                  className="data-[state=checked]:bg-indigo-500"
+                />
+              </div>
+              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700 space-y-1">
+                <p>开启桥接后，/api/chat 与 /api/generate 会优先走内置 LS 桥接，不会自动回落到外部模型 API。</p>
+                <p>桥接请求按 FIFO 串行执行，吞吐会低于并行直连模式，高并发场景请谨慎开启。</p>
+              </div>
+            </CardContent>
+          )}
         </Card>
 
         <Card className="glass border-none shadow-custom col-span-2">

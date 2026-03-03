@@ -8,6 +8,7 @@ import type { StreamMessage, StreamEvent, ConnectionStatus } from '../services/t
 import * as streamService from '../services/stream';
 import { subtitleWindow, isTauri } from '../services/tauri';
 import { MAX_HISTORY_SIZE, MIN_CONTENT_LENGTH } from '@/lib/constants';
+import { useConfigStore } from './configStore';
 
 const HISTORY_STORAGE_KEY = 'stream-history';
 
@@ -97,7 +98,7 @@ interface StreamState {
 
   // 字幕可见性
   setSubtitleVisible: (visible: boolean) => void;
-  showSubtitle: () => void;
+  showSubtitle: (force?: boolean) => void;
   hideSubtitle: () => void;
 
   // 历史操作
@@ -187,7 +188,15 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   },
 
   setSubtitleVisible: (visible) => set({ subtitleVisible: visible }),
-  showSubtitle: () => {
+  showSubtitle: (force = false) => {
+    const state = get();
+    if (state.subtitleVisible) {
+      return;
+    }
+    const shouldAutoShow = useConfigStore.getState().config?.subtitle_auto_show ?? true;
+    if (!force && !shouldAutoShow) {
+      return;
+    }
     if (isTauri()) {
       subtitleWindow.show();
     }
@@ -236,9 +245,10 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
     switch (event.type) {
       case 'stream_start': {
-        // 新消息开始时：归档当前内容到历史，清空当前内容，自动显示字幕
-        if (isTauri()) {
-          subtitleWindow.show();
+        // 新消息开始时：归档当前内容到历史，清空当前内容，根据配置决定是否自动显示字幕
+        const shouldAutoShow = useConfigStore.getState().config?.subtitle_auto_show ?? true;
+        if (shouldAutoShow && !state.subtitleVisible) {
+          state.showSubtitle();
         }
         const newSpeaker = event.data.speaker ?? null;
         if (state.isStreaming && state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
@@ -258,7 +268,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
               currentSpeaker: newSpeaker,
               currentEmotion: event.data.emotion ?? null,
               isStreaming: true,
-              subtitleVisible: true,
+              subtitleVisible: shouldAutoShow ? true : s.subtitleVisible,
             };
           });
         } else {
@@ -267,24 +277,24 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             currentSpeaker: newSpeaker,
             currentEmotion: event.data.emotion ?? null,
             isStreaming: true,
-            subtitleVisible: true,
+            subtitleVisible: shouldAutoShow ? true : state.subtitleVisible,
           });
         }
         emitContentToOverlay('', newSpeaker, true);
         break;
       }
 
-      case 'content':
-        // 确保字幕窗口显示
-        if (isTauri() && !state.subtitleVisible) {
-          subtitleWindow.show();
+      case 'content': {
+        const shouldAutoShow = useConfigStore.getState().config?.subtitle_auto_show ?? true;
+        if (shouldAutoShow && !state.subtitleVisible) {
+          state.showSubtitle();
         }
         if (event.data.full_content !== undefined) {
           emitContentToOverlay(event.data.full_content, state.currentSpeaker, true);
           set({
             currentContent: event.data.full_content,
             isStreaming: true,
-            subtitleVisible: true,
+            subtitleVisible: shouldAutoShow ? true : state.subtitleVisible,
           });
         } else if (event.data.content) {
           set((s) => {
@@ -293,7 +303,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             return {
               currentContent: newContent,
               isStreaming: true,
-              subtitleVisible: true,
+              subtitleVisible: shouldAutoShow ? true : s.subtitleVisible,
             };
           });
         }
@@ -301,6 +311,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
           state.setCurrentInfo(event.data.speaker, event.data.emotion);
         }
         break;
+      }
 
       case 'stream_end':
         state.finishStream();

@@ -140,6 +140,19 @@ pub struct Config {
     /// 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
     pub paste_mode: String,
 
+    #[serde(default)]
+    pub antigravity_bridge_enabled: bool,
+    #[serde(default = "default_antigravity_window_title")]
+    pub antigravity_window_title: String,
+    #[serde(default = "default_antigravity_timeout_ms")]
+    pub antigravity_timeout_ms: i32,
+    #[serde(default = "default_antigravity_max_retries")]
+    pub antigravity_max_retries: i32,
+    #[serde(default)]
+    pub antigravity_pending_submit_fallback_enabled: bool,
+    #[serde(default)]
+    pub antigravity_include_thinking: bool,
+
     // ==================== 辅助模型配置 ====================
     #[serde(default)]
     pub fallback_model_enabled: bool,
@@ -164,6 +177,8 @@ pub struct Config {
     pub subtitle_bg_color: String,
     /// 打字速度 (ms/字符)
     pub subtitle_typing_speed: i32,
+    /// 是否自动显示
+    pub subtitle_auto_show: bool,
     /// 是否自动隐藏
     pub subtitle_auto_hide: bool,
     /// 自动隐藏延迟 (ms)
@@ -255,6 +270,13 @@ impl Default for Config {
             voice_shortcut: "Ctrl+Shift+,".to_string(),
             paste_mode: "direct".to_string(),
 
+            antigravity_bridge_enabled: false,
+            antigravity_window_title: default_antigravity_window_title(),
+            antigravity_timeout_ms: default_antigravity_timeout_ms(),
+            antigravity_max_retries: default_antigravity_max_retries(),
+            antigravity_pending_submit_fallback_enabled: false,
+            antigravity_include_thinking: false,
+
             // 辅助模型配置
             fallback_model_enabled: false,
             fallback_preset_id: String::new(),
@@ -270,6 +292,7 @@ impl Default for Config {
             subtitle_font_color: "#FFFFFF".to_string(),
             subtitle_bg_color: "#000000".to_string(),
             subtitle_typing_speed: 50,
+            subtitle_auto_show: true,
             subtitle_auto_hide: true,
             subtitle_auto_hide_delay: 3000,
             subtitle_window_x: 100,
@@ -344,6 +367,9 @@ impl Default for HistoryCompressionConfig {
 
 fn default_fallback_trigger_threshold() -> i32 { 100 }
 fn default_fallback_pattern() -> String { "^SYSTEM:\\n".to_string() }
+fn default_antigravity_window_title() -> String { "Antigravity".to_string() }
+fn default_antigravity_timeout_ms() -> i32 { 180000 }
+fn default_antigravity_max_retries() -> i32 { 0 }
 
 /// 默认系统提示词注入
 pub const DEFAULT_SYSTEM_PROMPT_INJECTION: &str = r#"

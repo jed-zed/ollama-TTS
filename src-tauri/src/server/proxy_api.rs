@@ -27,6 +27,7 @@ use crate::services::stream_parser::extract_response_only;
 use crate::services::tts_parser::StreamingTTSParser;
 use crate::services::tts_gsv::GPTSoVITSEngine;
 use crate::services::audio_player::TTSManager;
+use crate::services::antigravity_bridge::AntigravityBridge;
 use crate::models::tts_types::TtsRequest;
 
 /// 代理服务器专用状态（不包含 proxy_manager 避免循环依赖）
@@ -36,6 +37,7 @@ pub struct ProxyAppState {
     pub broadcaster: Arc<SseBroadcaster>,
     pub gsv_engine: Option<Arc<Mutex<GPTSoVITSEngine>>>,
     pub tts_manager: Option<Arc<Mutex<TTSManager>>>,
+    pub bridge: Arc<AntigravityBridge>,
 }
 
 /// 模型信息
@@ -73,6 +75,30 @@ pub struct OllamaGenerateRequest {
     pub extra: Option<Value>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BridgeSubmitRequest {
+    pub id: String,
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct BridgePendingItem {
+    pub id: String,
+    pub prompt: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct BridgePendingResponse {
+    pub ok: bool,
+    pub pending: Option<BridgePendingItem>,
+}
+
+#[derive(Serialize)]
+pub struct BridgeSubmitResponse {
+    pub ok: bool,
+}
+
 static DIALOGUE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn next_dialogue_id() -> u64 {
@@ -91,6 +117,194 @@ fn broadcast_log(broadcaster: &SseBroadcaster, level: &str, message: &str) {
 }
 
 const FALLBACK_TRIGGER_PREFIX: &str = "SYSTEM:\n";
+
+fn collect_user_prompt(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn bridge_error_response(message: &str) -> Response<Body> {
+    let body = json!({
+        "model": "antigravity-ui",
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "done": true,
+        "error": message
+    });
+    Response::builder()
+        .status(StatusCode::BAD_GATEWAY)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn bridge_chat_response(model: &str, content: &str) -> Response<Body> {
+    let body = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "message": {
+            "role": "assistant",
+            "content": content,
+        },
+        "done": true
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn bridge_generate_response(model: &str, content: &str) -> Response<Body> {
+    let body = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "response": content,
+        "done": true
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn bridge_chat_stream_response(model: &str, content: &str) -> Response<Body> {
+    let chunk = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "message": {
+            "role": "assistant",
+            "content": content,
+        },
+        "done": false
+    });
+    let done = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "message": {
+            "role": "assistant",
+            "content": "",
+        },
+        "done": true
+    });
+    let body = format!("{}\n{}\n", chunk, done);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/x-ndjson")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+fn bridge_generate_stream_response(model: &str, content: &str) -> Response<Body> {
+    let chunk = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "response": content,
+        "done": false
+    });
+    let done = json!({
+        "model": model,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "response": "",
+        "done": true
+    });
+    let body = format!("{}\n{}\n", chunk, done);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/x-ndjson")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn execute_bridge_waitback(
+    state: &ProxyAppState,
+    prompt: String,
+    timeout_ms: i32,
+    max_retries: i32,
+    fallback_enabled: bool,
+    include_thinking: bool,
+) -> Result<String, String> {
+    let retries = max_retries.clamp(0, 3) as usize + 1;
+    let mut last_error: Option<String> = None;
+    let fallback_wait_timeout_ms = timeout_ms.clamp(3_000, 10_000);
+
+    for attempt in 1..=retries {
+        let stage_msg = format!(
+            "Antigravity 内置桥接尝试: attempt={}/{}, stage=discover/connect/send/poll/parse",
+            attempt, retries
+        );
+        info!("{}", stage_msg);
+        broadcast_log(&state.broadcaster, "INFO", &stage_msg);
+
+        match state.bridge.execute_builtin_ls_waitback(prompt.clone(), timeout_ms, include_thinking).await {
+            Ok(content) => {
+                let ok_msg = format!("Antigravity 内置桥接成功: attempt={}/{}", attempt, retries);
+                info!("{}", ok_msg);
+                broadcast_log(&state.broadcaster, "SUCCESS", &ok_msg);
+                return Ok(content);
+            }
+            Err(err) => {
+                let err_msg = format!("Antigravity 内置桥接失败: attempt={}/{}, error={}", attempt, retries, err);
+                warn!("{}", err_msg);
+                broadcast_log(&state.broadcaster, "WARN", &err_msg);
+                last_error = Some(err);
+            }
+        }
+    }
+
+    if !fallback_enabled {
+        return Err(last_error.unwrap_or_else(|| "bridge builtin execution failed".to_string()));
+    }
+
+    let fallback_msg = "Antigravity 内置桥接失败，进入 pending/submit 显式降级通道";
+    warn!("{}", fallback_msg);
+    broadcast_log(&state.broadcaster, "WARN", fallback_msg);
+
+    for attempt in 1..=retries {
+        match state.bridge.enqueue(prompt.clone()).await {
+            Ok(request_id) => {
+                let queue_msg = format!(
+                    "Antigravity 降级桥接排队成功: attempt={}/{}, request_id={}",
+                    attempt, retries, request_id
+                );
+                info!("{}", queue_msg);
+                broadcast_log(&state.broadcaster, "INFO", &queue_msg);
+
+                match state
+                    .bridge
+                    .wait_for_result(&request_id, fallback_wait_timeout_ms)
+                    .await
+                {
+                    Ok(result) => return Ok(result.content),
+                    Err(err) => {
+                        last_error = Some(err.clone());
+                        let wait_err_msg = format!(
+                            "Antigravity 降级桥接等待失败: attempt={}/{}, request_id={}, timeout_ms={}, error={}",
+                            attempt, retries, request_id, fallback_wait_timeout_ms, err
+                        );
+                        warn!("{}", wait_err_msg);
+                        broadcast_log(&state.broadcaster, "WARN", &wait_err_msg);
+                    }
+                }
+            }
+            Err(err) => {
+                last_error = Some(err.clone());
+                let enqueue_err_msg = format!(
+                    "Antigravity 降级桥接排队失败: attempt={}/{}, error={}",
+                    attempt, retries, err
+                );
+                warn!("{}", enqueue_err_msg);
+                broadcast_log(&state.broadcaster, "WARN", &enqueue_err_msg);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "bridge execution failed".to_string()))
+}
 
 fn get_builtin_preset_url(preset_id: &str) -> &'static str {
     match preset_id {
@@ -167,10 +381,11 @@ fn check_fallback_trigger(messages: &[ChatMessage], config: &crate::models::conf
 /// GET /api/tags
 async fn get_tags(State(state): State<ProxyAppState>) -> Json<TagsResponse> {
     let config = state.config_store.get();
-    let base_model = if config.model_name.is_empty() {
+    let configured_model = config.model_name.trim();
+    let base_model = if configured_model.is_empty() {
         "default:latest".to_string()
     } else {
-        config.model_name.clone()
+        configured_model.to_string()
     };
     
     let mut models = vec![
@@ -188,6 +403,53 @@ async fn get_tags(State(state): State<ProxyAppState>) -> Json<TagsResponse> {
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
     Json(TagsResponse { models })
+}
+
+async fn bridge_pending(State(state): State<ProxyAppState>) -> Json<BridgePendingResponse> {
+    let pending = state.bridge.next_pending().await.map(|task| BridgePendingItem {
+        id: task.id,
+        prompt: task.prompt,
+        created_at: task.created_at,
+    });
+
+    Json(BridgePendingResponse {
+        ok: true,
+        pending,
+    })
+}
+
+async fn bridge_submit(
+    State(state): State<ProxyAppState>,
+    Json(request): Json<BridgeSubmitRequest>,
+) -> Response<Body> {
+    let request_id = request.id.trim().to_string();
+    let content = request.content.trim().to_string();
+
+    if request_id.is_empty() || content.is_empty() {
+        let body = json!({ "ok": false, "error": "invalid bridge submit payload" });
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header("Content-Type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+    }
+
+    match state.bridge.submit(request_id, content).await {
+        Ok(_) => Json(BridgeSubmitResponse { ok: true }).into_response(),
+        Err(err) => {
+            let status = if err.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            let body = json!({ "ok": false, "error": err });
+            Response::builder()
+                .status(status)
+                .header("Content-Type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+    }
 }
 
 /// 处理聊天请求
@@ -208,6 +470,38 @@ async fn chat(
     );
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
+
+    if config.antigravity_bridge_enabled {
+        let bridge_prompt = collect_user_prompt(&request.messages);
+        if bridge_prompt.trim().is_empty() {
+            return bridge_error_response("bridge input is empty");
+        }
+
+        match execute_bridge_waitback(
+            &state,
+            bridge_prompt,
+            config.antigravity_timeout_ms,
+            config.antigravity_max_retries,
+            config.antigravity_pending_submit_fallback_enabled,
+            config.antigravity_include_thinking,
+        )
+        .await
+        {
+            Ok(content) => {
+                broadcast_log(&state.broadcaster, "SUCCESS", "Antigravity UI 自动化桥接执行成功");
+                if request.stream {
+                    return bridge_chat_stream_response(&request.model, &content);
+                }
+                return bridge_chat_response(&request.model, &content);
+            }
+            Err(err) => {
+                let err_msg = format!("Antigravity UI 自动化桥接执行失败: {}", err);
+                error!("{}", err_msg);
+                broadcast_log(&state.broadcaster, "ERROR", &err_msg);
+                return bridge_error_response(&err_msg);
+            }
+        }
+    }
     
     if config.api_url.is_empty() {
         let err_msg = "API URL 未配置";
@@ -289,6 +583,37 @@ async fn generate(
     );
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
+
+    if config.antigravity_bridge_enabled {
+        if request.prompt.trim().is_empty() {
+            return bridge_error_response("bridge input is empty");
+        }
+
+        match execute_bridge_waitback(
+            &state,
+            request.prompt.clone(),
+            config.antigravity_timeout_ms,
+            config.antigravity_max_retries,
+            config.antigravity_pending_submit_fallback_enabled,
+            config.antigravity_include_thinking,
+        )
+        .await
+        {
+            Ok(content) => {
+                broadcast_log(&state.broadcaster, "SUCCESS", "Antigravity UI 自动化桥接执行成功");
+                if request.stream {
+                    return bridge_generate_stream_response(&request.model, &content);
+                }
+                return bridge_generate_response(&request.model, &content);
+            }
+            Err(err) => {
+                let err_msg = format!("Antigravity UI 自动化桥接执行失败: {}", err);
+                error!("{}", err_msg);
+                broadcast_log(&state.broadcaster, "ERROR", &err_msg);
+                return bridge_error_response(&err_msg);
+            }
+        }
+    }
     
     if config.api_url.is_empty() {
         let err_msg = "API URL 未配置";
@@ -994,13 +1319,231 @@ async fn get_version() -> Json<Value> {
 }
 
 /// 创建代理路由器
+// ==================== OpenAI 兼容接口 ====================
+
+/// OpenAI 格式的 chat completions 响应（非流式）
+fn openai_chat_response(model: &str, content: &str) -> Response<Body> {
+    let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..24].to_string());
+    let body = json!({
+        "id": id,
+        "object": "chat.completion",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content,
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// OpenAI 格式的 chat completions SSE 流式响应
+fn openai_chat_stream_response(model: &str, content: &str) -> Response<Body> {
+    let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..24].to_string());
+    let chunk = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "role": "assistant",
+                "content": content,
+            },
+            "finish_reason": Value::Null
+        }]
+    });
+    let done_chunk = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": "stop"
+        }]
+    });
+    let body = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        chunk, done_chunk
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// OpenAI 格式的错误响应
+fn openai_error_response(message: &str) -> Response<Body> {
+    let body = json!({
+        "error": {
+            "message": message,
+            "type": "server_error",
+            "code": "internal_error"
+        }
+    });
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// 处理 OpenAI 格式的 chat completions 请求
+///
+/// POST /v1/chat/completions
+/// POST /chat/completions
+async fn openai_chat_completions(
+    State(state): State<ProxyAppState>,
+    Json(request): Json<OllamaChatRequest>,
+) -> Response<Body> {
+    let config = state.config_store.get();
+    let base_model = &config.model_name;
+    let (real_model, is_fake_stream) = detect_fake_stream(&request.model, base_model);
+    let should_stream = request.stream || is_fake_stream;
+
+    let msg = format!(
+        "收到 OpenAI chat/completions 请求: model={}, stream={}, 假流式={}",
+        request.model, should_stream, is_fake_stream
+    );
+    info!("{}", msg);
+    broadcast_log(&state.broadcaster, "INFO", &msg);
+
+    // Antigravity 桥接
+    if config.antigravity_bridge_enabled {
+        let bridge_prompt = collect_user_prompt(&request.messages);
+        if bridge_prompt.trim().is_empty() {
+            return openai_error_response("bridge input is empty");
+        }
+
+        match execute_bridge_waitback(
+            &state,
+            bridge_prompt,
+            config.antigravity_timeout_ms,
+            config.antigravity_max_retries,
+            config.antigravity_pending_submit_fallback_enabled,
+            config.antigravity_include_thinking,
+        )
+        .await
+        {
+            Ok(content) => {
+                broadcast_log(&state.broadcaster, "SUCCESS", "Antigravity 桥接成功 (OpenAI 格式)");
+                if should_stream {
+                    return openai_chat_stream_response(&request.model, &content);
+                }
+                return openai_chat_response(&request.model, &content);
+            }
+            Err(err) => {
+                let err_msg = format!("Antigravity 桥接失败: {}", err);
+                error!("{}", err_msg);
+                broadcast_log(&state.broadcaster, "ERROR", &err_msg);
+                return openai_error_response(&err_msg);
+            }
+        }
+    }
+
+    // 走外部 API
+    if config.api_url.is_empty() {
+        return openai_error_response("API URL 未配置");
+    }
+
+    let llm = LlmClient::new(config.api_url.clone(), config.api_key.clone());
+    let chat_request = ChatRequest {
+        model: real_model.clone(),
+        messages: request.messages,
+        stream: should_stream,
+        extra: request.extra,
+    };
+
+    match llm.chat(chat_request, Some(&config.system_prompt_injection), Some(base_model)).await {
+        Ok(result) => {
+            if result.is_streaming {
+                // 转发外部流式响应（原始格式可能已是 OpenAI 格式）
+                let stream = result.response.bytes_stream();
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/event-stream")
+                    .header("Cache-Control", "no-cache")
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            } else {
+                // 非流式：解析响应并转换为 OpenAI 格式
+                match result.response.text().await {
+                    Ok(text) => {
+                        let content = if let Ok(data) = serde_json::from_str::<Value>(&text) {
+                            extract_response_content(&data)
+                        } else {
+                            text
+                        };
+                        openai_chat_response(&real_model, &content)
+                    }
+                    Err(e) => openai_error_response(&format!("读取响应失败: {}", e)),
+                }
+            }
+        }
+        Err(err) => openai_error_response(&err),
+    }
+}
+
+/// OpenAI models 列表
+///
+/// GET /v1/models
+async fn openai_models(
+    State(state): State<ProxyAppState>,
+) -> Response<Body> {
+    let config = state.config_store.get();
+    let model_name = if config.model_name.is_empty() {
+        "antigravity".to_string()
+    } else {
+        config.model_name.clone()
+    };
+    let body = json!({
+        "object": "list",
+        "data": [{
+            "id": model_name,
+            "object": "model",
+            "created": chrono::Utc::now().timestamp(),
+            "owned_by": "local"
+        }]
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 pub fn create_router(state: ProxyAppState) -> Router {
     Router::new()
         .route("/", get(health_check))
         .route("/api/version", get(get_version))
         .route("/api/tags", get(get_tags))
+        .route("/api/bridge/pending", get(bridge_pending))
+        .route("/api/bridge/submit", post(bridge_submit))
         .route("/api/chat", post(chat))
         .route("/api/generate", post(generate))
+        // OpenAI 兼容路由
+        .route("/v1/chat/completions", post(openai_chat_completions))
+        .route("/chat/completions", post(openai_chat_completions))
+        .route("/v1/models", get(openai_models))
         .fallback(fallback_handler)
         .with_state(state)
 }

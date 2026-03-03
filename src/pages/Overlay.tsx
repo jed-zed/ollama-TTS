@@ -53,6 +53,7 @@ interface SubtitleConfig {
   bgColor: string;
   charDelay: number;
   textOnly: boolean;
+  autoShow: boolean;
   autoHide: boolean;
   autoHideDelay: number;
 }
@@ -64,6 +65,7 @@ const DEFAULT_CONFIG: SubtitleConfig = {
   bgColor: 'linear-gradient(135deg, #fce7f3, #f5d0fe)',
   charDelay: 30,
   textOnly: false,
+  autoShow: true,
   autoHide: true,
   autoHideDelay: 5,
 };
@@ -123,7 +125,6 @@ const Overlay: React.FC = () => {
   const [history, setHistory] = useState<Array<{ id: string; content: string; speaker?: string; timestamp: number }>>([]);
 
   const [clickThrough, setClickThrough] = useState(false);
-  const [autoShow, setAutoShow] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -214,6 +215,9 @@ const Overlay: React.FC = () => {
         textOnly: typeof newConfig.subtitle_text_only === 'boolean'
           ? newConfig.subtitle_text_only
           : prev.textOnly,
+        autoShow: typeof newConfig.subtitle_auto_show === 'boolean'
+          ? newConfig.subtitle_auto_show
+          : prev.autoShow,
         autoHide: typeof newConfig.subtitle_auto_hide === 'boolean'
           ? newConfig.subtitle_auto_hide
           : prev.autoHide,
@@ -418,7 +422,7 @@ const Overlay: React.FC = () => {
   const handleClose = useCallback(async () => {
     await saveWindowGeometry();
     if (isTauri()) {
-      await subtitleWindow.hide();
+      await subtitleWindow.emitUserHide();
     }
   }, [saveWindowGeometry]);
 
@@ -584,6 +588,7 @@ const Overlay: React.FC = () => {
 
   const handleResetDefaults = useCallback(() => {
     setConfig(DEFAULT_CONFIG);
+    updateConfig('subtitle_auto_show', DEFAULT_CONFIG.autoShow);
     updateConfig('subtitle_auto_hide', DEFAULT_CONFIG.autoHide);
     updateConfig('subtitle_auto_hide_delay', DEFAULT_CONFIG.autoHideDelay);
   }, [updateConfig]);

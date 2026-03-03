@@ -16,6 +16,7 @@ use crate::services::config_store::ConfigStore;
 use crate::services::sse_broadcaster::{SseBroadcaster, LogEvent};
 use crate::services::tts_gsv::GPTSoVITSEngine;
 use crate::services::audio_player::TTSManager;
+use crate::services::antigravity_bridge::AntigravityBridge;
 
 /// 代理服务器状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +138,7 @@ impl ProxyServerManager {
             broadcaster: self.broadcaster.clone(),
             gsv_engine: self.gsv_engine.clone(),
             tts_manager: self.tts_manager.clone(),
+            bridge: Arc::new(AntigravityBridge::new()),
         };
         
         if self.gsv_engine.is_some() && self.tts_manager.is_some() {
