@@ -127,6 +127,7 @@ export interface Config {
 
   antigravity_bridge_enabled: boolean;
   antigravity_include_thinking: boolean;
+  antigravity_max_concurrent: number;
   antigravity_window_title: string;
   antigravity_timeout_ms: number;
   antigravity_max_retries: number;

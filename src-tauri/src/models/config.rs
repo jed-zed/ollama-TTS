@@ -152,6 +152,8 @@ pub struct Config {
     pub antigravity_pending_submit_fallback_enabled: bool,
     #[serde(default)]
     pub antigravity_include_thinking: bool,
+    #[serde(default = "default_antigravity_max_concurrent")]
+    pub antigravity_max_concurrent: i32,
 
     // ==================== 辅助模型配置 ====================
     #[serde(default)]
@@ -276,6 +278,7 @@ impl Default for Config {
             antigravity_max_retries: default_antigravity_max_retries(),
             antigravity_pending_submit_fallback_enabled: false,
             antigravity_include_thinking: false,
+            antigravity_max_concurrent: default_antigravity_max_concurrent(),
 
             // 辅助模型配置
             fallback_model_enabled: false,
@@ -370,6 +373,7 @@ fn default_fallback_pattern() -> String { "^SYSTEM:\\n".to_string() }
 fn default_antigravity_window_title() -> String { "Antigravity".to_string() }
 fn default_antigravity_timeout_ms() -> i32 { 180000 }
 fn default_antigravity_max_retries() -> i32 { 0 }
+fn default_antigravity_max_concurrent() -> i32 { 3 }
 
 /// 默认系统提示词注入
 pub const DEFAULT_SYSTEM_PROMPT_INJECTION: &str = r#"

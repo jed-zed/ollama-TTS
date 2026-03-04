@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use parking_lot::RwLock;
 use tokio::sync::{watch, Mutex};
 use tower_http::cors::{Any, CorsLayer};
@@ -154,7 +155,9 @@ impl ProxyServerManager {
             .allow_methods(Any)
             .allow_headers(Any);
 
-        let app: Router = proxy_api::create_router(state).layer(cors);
+        let app: Router = proxy_api::create_router(state)
+            .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
+            .layer(cors);
 
         let addr = SocketAddr::from(([127, 0, 0, 1], 11434));
 

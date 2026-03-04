@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use regex::Regex;
 use serde_json::{json, Value};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, Semaphore};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -16,12 +16,20 @@ const MAX_CONTENT_LENGTH: usize = 1_000_000;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_STABLE_ROUNDS: u8 = 2;
 const DEFAULT_REQUEST_SOURCE: i32 = 0;
-const DEFAULT_PLANNER_TYPE: &str = "conversational";
-const DEFAULT_MODEL_ID: i32 = 1018;
 const DEFAULT_TASK_TTL_MS: u64 = 180_000;
+const LS_CACHE_TTL_SECS: u64 = 60;
+const DEFAULT_MAX_CONCURRENT: usize = 3;
+
+/// 缓存的 LS 连接信息
+struct CachedLsConnection {
+    connection: LsConnection,
+    discovered_at: Instant,
+}
 
 pub struct AntigravityBridge {
     inner: Arc<Mutex<BridgeInner>>,
+    ls_cache: Arc<Mutex<Option<CachedLsConnection>>>,
+    concurrency: Arc<Semaphore>,
 }
 
 struct BridgeInner {
@@ -75,7 +83,54 @@ impl AntigravityBridge {
                 queue: VecDeque::new(),
                 waiters: HashMap::new(),
             })),
+            ls_cache: Arc::new(Mutex::new(None)),
+            concurrency: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
         }
+    }
+
+    /// 获取或发现 LS 连接（带缓存）
+    async fn get_or_discover_connection(&self) -> Result<LsConnection, String> {
+        // 检查缓存
+        {
+            let cache = self.ls_cache.lock().await;
+            if let Some(ref cached) = *cache {
+                if cached.discovered_at.elapsed().as_secs() < LS_CACHE_TTL_SECS {
+                    info!("复用缓存的 LS 连接: port={}", cached.connection.port);
+                    return Ok(LsConnection {
+                        port: cached.connection.port,
+                        csrf_token: cached.connection.csrf_token.clone(),
+                        prefer_https: cached.connection.prefer_https,
+                    });
+                }
+                info!("LS 连接缓存已过期，重新发现");
+            }
+        }
+
+        // 发现新连接
+        let connection = discover_ls_connection().await?;
+        info!("LS 连接发现成功并缓存: port={}", connection.port);
+
+        // 写入缓存
+        {
+            let mut cache = self.ls_cache.lock().await;
+            *cache = Some(CachedLsConnection {
+                connection: LsConnection {
+                    port: connection.port,
+                    csrf_token: connection.csrf_token.clone(),
+                    prefer_https: connection.prefer_https,
+                },
+                discovered_at: Instant::now(),
+            });
+        }
+
+        Ok(connection)
+    }
+
+    /// 清除 LS 连接缓存（连接失败时调用）
+    async fn invalidate_ls_cache(&self) {
+        let mut cache = self.ls_cache.lock().await;
+        *cache = None;
+        info!("LS 连接缓存已清除");
     }
 
     pub async fn enqueue(&self, prompt: String) -> Result<String, String> {
@@ -192,11 +247,12 @@ impl AntigravityBridge {
             return Err("bridge input is too long".to_string());
         }
 
-        let timeout = timeout_ms.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS) as u64;
-        info!("内置 LS 桥接开始执行: timeout_ms={}", timeout);
+        // 获取并发许可（超限请求在此排队等待）
+        let _permit = self.concurrency.acquire().await
+            .map_err(|_| "bridge concurrency semaphore closed".to_string())?;
+        info!("内置 LS 桥接获取并发许可，开始执行");
 
-        let connection = discover_ls_connection().await?;
-        info!("内置 LS 桥接完成连接发现: port={}", connection.port);
+        let timeout = timeout_ms.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS) as u64;
 
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
@@ -204,19 +260,44 @@ impl AntigravityBridge {
             .build()
             .map_err(|err| format!("connect: build ls client failed: {}", err))?;
 
-        let cascade_id = start_cascade(&client, &connection).await?;
-        info!("内置 LS 桥接创建会话成功: cascade_id={}", cascade_id);
+        // 尝试用缓存连接，失败则清除缓存重试
+        let connection = match self.get_or_discover_connection().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                warn!("LS 连接发现失败: {}, 清除缓存重试", e);
+                self.invalidate_ls_cache().await;
+                return Err(e);
+            }
+        };
+
+        // 每个请求创建独立的 cascade（请求隔离的关键）
+        let cascade_id = match start_cascade(&client, &connection).await {
+            Ok(id) => id,
+            Err(e) => {
+                // cascade 创建失败可能是连接已失效，清除缓存
+                warn!("cascade 创建失败，清除 LS 缓存: {}", e);
+                self.invalidate_ls_cache().await;
+                return Err(e);
+            }
+        };
+        info!("[{}] 创建独立 cascade 会话成功", cascade_id);
 
         info!(
-            "内置 LS 桥接准备发送消息: cascade_id={}, prompt_len={}, prompt_preview={}",
+            "[{}] 发送消息: prompt_len={}, preview={}",
             cascade_id,
             prompt.len(),
             prompt.chars().take(200).collect::<String>()
         );
         send_user_message(&client, &connection, &cascade_id, &prompt).await?;
-        info!("内置 LS 桥接发送消息成功: cascade_id={}", cascade_id);
+        info!("[{}] 消息发送成功", cascade_id);
 
-        wait_for_stable_response(&client, &connection, &cascade_id, &prompt, timeout, include_thinking).await
+        // 轮询此 cascade 的 trajectory（每个 cascade_id 独立，不会混淆）
+        let result = wait_for_stable_response(
+            &client, &connection, &cascade_id, &prompt, timeout, include_thinking
+        ).await;
+
+        // _permit 在此作用域结束时自动释放，允许下一个排队请求进入
+        result
     }
 
     async fn cleanup_request(&self, id: &str) {
@@ -432,52 +513,35 @@ async fn send_user_message(
     cascade_id: &str,
     prompt: &str,
 ) -> Result<(), String> {
-    // proto3 canonical JSON: oneof chunk 直接用字段名
-    let proto3_items = json!([{ "text": prompt }]);
-
-    // ConnectRPC case/value 格式
-    let connectrpc_items = json!([{
-        "chunk": {
-            "case": "text",
-            "value": prompt
+    // LS 强制要求指定 requestedModel
+    let cascade_config = json!({
+        "plannerConfig": {
+            "plannerTypeConfig": {
+                "conversational": {}
+            },
+            "requestedModel": {
+                "model": 1018
+            }
         }
-    }]);
+    });
 
     let payloads: Vec<(&str, Value)> = vec![
-        // proto3 canonical JSON 格式（优先尝试）
+        // proto3 canonical JSON: items: [{"text": "..."}]
         (
-            "proto3_direct_text",
+            "proto3_text_items",
             json!({
                 "cascadeId": cascade_id,
-                "items": proto3_items.clone(),
-                "cascadeConfig": {
-                    "plannerConfig": {
-                        "plannerTypeConfig": {
-                            "conversational": {}
-                        },
-                        "requestedModel": {
-                            "model": DEFAULT_MODEL_ID
-                        }
-                    }
-                }
+                "items": [{ "text": prompt }],
+                "cascadeConfig": cascade_config
             }),
         ),
-        // userMessage 字段
+        // 简化格式：userMessage 字段
         (
             "proto3_user_message",
             json!({
                 "cascadeId": cascade_id,
                 "userMessage": prompt,
-                "cascadeConfig": {
-                    "plannerConfig": {
-                        "plannerTypeConfig": {
-                            "conversational": {}
-                        },
-                        "requestedModel": {
-                            "model": DEFAULT_MODEL_ID
-                        }
-                    }
-                }
+                "cascadeConfig": cascade_config
             }),
         ),
         // ConnectRPC case/value 格式
@@ -485,38 +549,13 @@ async fn send_user_message(
             "connectrpc_case_value",
             json!({
                 "cascadeId": cascade_id,
-                "items": connectrpc_items.clone(),
-                "cascadeConfig": {
-                    "plannerConfig": {
-                        "plannerTypeConfig": {
-                            "conversational": {}
-                        },
-                        "requestedModel": {
-                            "model": DEFAULT_MODEL_ID
-                        }
+                "items": [{
+                    "chunk": {
+                        "case": "text",
+                        "value": prompt
                     }
-                }
-            }),
-        ),
-        (
-            "connectrpc_legacy_wrapper",
-            json!({
-                "cascadeId": cascade_id,
-                "items": connectrpc_items.clone(),
-                "cascadeConfig": {
-                    "plannerConfig": {
-                        "plannerTypeConfig": {
-                            "case": DEFAULT_PLANNER_TYPE,
-                            "value": {}
-                        },
-                        "requestedModel": {
-                            "choice": {
-                                "case": "model",
-                                "value": DEFAULT_MODEL_ID
-                            }
-                        }
-                    }
-                }
+                }],
+                "cascadeConfig": cascade_config
             }),
         ),
     ];
@@ -528,16 +567,15 @@ async fn send_user_message(
                 let raw_str = resp.to_string();
                 let snapshot: String = raw_str.chars().take(500).collect();
                 info!(
-                    "SendUserCascadeMessage 响应: variant={}, len={}, data={}",
+                    "SendUserCascadeMessage 成功: variant={}, len={}, data={}",
                     variant, raw_str.len(), snapshot
                 );
                 return Ok(());
             }
             Err(err) => {
                 debug!(
-                    "内置 LS 桥接 SendUserCascadeMessage 负载候选失败: variant={}, error={}",
-                    variant,
-                    err
+                    "SendUserCascadeMessage 失败: variant={}, error={}",
+                    variant, err
                 );
                 last_err = err;
             }

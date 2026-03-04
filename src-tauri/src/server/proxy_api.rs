@@ -119,12 +119,13 @@ fn broadcast_log(broadcaster: &SseBroadcaster, level: &str, message: &str) {
 const FALLBACK_TRIGGER_PREFIX: &str = "SYSTEM:\n";
 
 fn collect_user_prompt(messages: &[ChatMessage]) -> String {
+    // 直接拼接所有消息的原始内容，不做任何处理
     messages
         .iter()
-        .filter(|m| m.role == "user")
+        .filter(|m| !m.content.is_empty())
         .map(|m| m.content.as_str())
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n\n")
 }
 
 fn bridge_error_response(message: &str) -> Response<Body> {
@@ -1413,26 +1414,86 @@ fn openai_error_response(message: &str) -> Response<Body> {
 /// POST /chat/completions
 async fn openai_chat_completions(
     State(state): State<ProxyAppState>,
-    Json(request): Json<OllamaChatRequest>,
+    body: axum::body::Bytes,
 ) -> Response<Body> {
+    // 用 Value 解析，保留所有原始字段不丢失
+    let raw: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            let err = format!("JSON 解析失败: {} (body_len={})", e, body.len());
+            error!("{}", err);
+            return openai_error_response(&err);
+        }
+    };
+
+    let model = raw.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+    let stream = raw.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let config = state.config_store.get();
     let base_model = &config.model_name;
-    let (real_model, is_fake_stream) = detect_fake_stream(&request.model, base_model);
-    let should_stream = request.stream || is_fake_stream;
+    let (real_model, is_fake_stream) = detect_fake_stream(&model, base_model);
+    let should_stream = stream || is_fake_stream;
 
     let msg = format!(
-        "收到 OpenAI chat/completions 请求: model={}, stream={}, 假流式={}",
-        request.model, should_stream, is_fake_stream
+        "收到 OpenAI chat/completions 请求: model={}, stream={}, 假流式={}, body_len={}",
+        model, should_stream, is_fake_stream, body.len()
     );
     info!("{}", msg);
     broadcast_log(&state.broadcaster, "INFO", &msg);
 
     // Antigravity 桥接
     if config.antigravity_bridge_enabled {
-        let bridge_prompt = collect_user_prompt(&request.messages);
+        // 按照 antigravity 示范格式构建 prompt：
+        // 1. 只包含 messages 数组（去掉 frequency_penalty, max_tokens 等）
+        // 2. 每个 message 对象中 role 在 content 前面
+        // 3. Pretty-printed JSON 格式
+        let bridge_prompt = {
+            let messages = raw.get("messages").and_then(|v| v.as_array());
+            match messages {
+                Some(msgs) => {
+                    // 手动构建 JSON 字符串，控制 key 顺序：role 在 content 前面
+                    let mut result = String::from("{\n  \"messages\": [\n");
+                    for (i, msg) in msgs.iter().enumerate() {
+                        let obj = msg.as_object();
+                        result.push_str("    {\n");
+                        if let Some(map) = obj {
+                            // 先输出 role，再输出 content，最后输出其他字段
+                            let role = map.get("role");
+                            let content = map.get("content");
+                            let mut fields: Vec<String> = Vec::new();
+                            if let Some(r) = role {
+                                fields.push(format!("      \"role\": {}", serde_json::to_string(r).unwrap_or_default()));
+                            }
+                            if let Some(c) = content {
+                                fields.push(format!("      \"content\": {}", serde_json::to_string(c).unwrap_or_default()));
+                            }
+                            // 其他字段（如 name 等）
+                            for (k, v) in map {
+                                if k != "role" && k != "content" {
+                                    fields.push(format!("      \"{}\": {}", k, serde_json::to_string(v).unwrap_or_default()));
+                                }
+                            }
+                            result.push_str(&fields.join(",\n"));
+                            result.push('\n');
+                        }
+                        result.push_str("    }");
+                        if i < msgs.len() - 1 {
+                            result.push(',');
+                        }
+                        result.push('\n');
+                    }
+                    result.push_str("  ]\n}");
+                    result
+                }
+                None => {
+                    // 如果没有 messages，回退到 pretty-print 整个 JSON
+                    serde_json::to_string_pretty(&raw).unwrap_or_default()
+                }
+            }
+        };
         if bridge_prompt.trim().is_empty() {
             return openai_error_response("bridge input is empty");
         }
+        info!("OpenAI 桥接 prompt 长度: {} bytes, 前500字符: {}", bridge_prompt.len(), bridge_prompt.chars().take(500).collect::<String>());
 
         match execute_bridge_waitback(
             &state,
@@ -1447,9 +1508,9 @@ async fn openai_chat_completions(
             Ok(content) => {
                 broadcast_log(&state.broadcaster, "SUCCESS", "Antigravity 桥接成功 (OpenAI 格式)");
                 if should_stream {
-                    return openai_chat_stream_response(&request.model, &content);
+                    return openai_chat_stream_response(&model, &content);
                 }
-                return openai_chat_response(&request.model, &content);
+                return openai_chat_response(&model, &content);
             }
             Err(err) => {
                 let err_msg = format!("Antigravity 桥接失败: {}", err);
@@ -1460,17 +1521,27 @@ async fn openai_chat_completions(
         }
     }
 
-    // 走外部 API
+    // 走外部 API — 需要反序列化为 ChatRequest
     if config.api_url.is_empty() {
         return openai_error_response("API URL 未配置");
     }
 
     let llm = LlmClient::new(config.api_url.clone(), config.api_key.clone());
+    let messages: Vec<ChatMessage> = raw.get("messages")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let extra: Option<Value> = {
+        let mut obj = if let Value::Object(m) = raw { m } else { serde_json::Map::new() };
+        obj.remove("model");
+        obj.remove("messages");
+        obj.remove("stream");
+        if obj.is_empty() { None } else { Some(Value::Object(obj)) }
+    };
     let chat_request = ChatRequest {
         model: real_model.clone(),
-        messages: request.messages,
+        messages,
         stream: should_stream,
-        extra: request.extra,
+        extra,
     };
 
     match llm.chat(chat_request, Some(&config.system_prompt_injection), Some(base_model)).await {

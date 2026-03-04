@@ -155,6 +155,7 @@ const defaultConfig: Config = {
 
   antigravity_bridge_enabled: false,
   antigravity_include_thinking: false,
+  antigravity_max_concurrent: 3,
   antigravity_window_title: 'Antigravity',
   antigravity_timeout_ms: 60000,
   antigravity_max_retries: 0,

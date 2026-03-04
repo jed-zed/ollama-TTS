@@ -390,8 +390,8 @@ const Service = () => {
         <div className="flex gap-3">
           {/* API 状态徽章 */}
           <Badge variant="outline" className={`px-3 py-1.5 ${config?.api_url
-              ? 'border-green-300 bg-green-50 text-green-600'
-              : 'border-orange-300 bg-orange-50 text-orange-600'
+            ? 'border-green-300 bg-green-50 text-green-600'
+            : 'border-orange-300 bg-orange-50 text-orange-600'
             }`}>
             <div className={`w-2 h-2 rounded-full mr-2 ${config?.api_url ? 'bg-green-500 animate-pulse' : 'bg-orange-500'
               }`} />
@@ -400,14 +400,14 @@ const Service = () => {
 
           {/* TTS 状态徽章 */}
           <Badge variant="outline" className={`px-3 py-1.5 ${config?.tts_enabled
-              ? isPlaying
-                ? 'border-green-300 bg-green-50 text-green-600'
-                : 'border-purple-300 bg-purple-50 text-purple-600'
-              : 'border-gray-300 bg-gray-50 text-gray-600'
+            ? isPlaying
+              ? 'border-green-300 bg-green-50 text-green-600'
+              : 'border-purple-300 bg-purple-50 text-purple-600'
+            : 'border-gray-300 bg-gray-50 text-gray-600'
             }`}>
             <div className={`w-2 h-2 rounded-full mr-2 ${config?.tts_enabled
-                ? isPlaying ? 'bg-green-500 animate-pulse' : 'bg-purple-500'
-                : 'bg-gray-400'
+              ? isPlaying ? 'bg-green-500 animate-pulse' : 'bg-purple-500'
+              : 'bg-gray-400'
               }`} />
             {config?.tts_enabled
               ? isPlaying ? 'TTS 播放中' : 'TTS 待机'
@@ -431,8 +431,8 @@ const Service = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-lg ${proxyStatus === 'running'
-                    ? 'bg-green-100 text-green-600'
-                    : 'bg-gray-100 text-gray-600'
+                  ? 'bg-green-100 text-green-600'
+                  : 'bg-gray-100 text-gray-600'
                   }`}>
                   <Network className="h-5 w-5" />
                 </div>
@@ -459,8 +459,8 @@ const Service = () => {
                   onClick={proxyStatus === 'running' ? handleStopProxy : handleStartProxy}
                   disabled={isProxyOperating}
                   className={`h-8 text-white ${proxyStatus === 'running'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-green-600 hover:bg-green-700'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-green-600 hover:bg-green-700'
                     }`}
                 >
                   {isProxyOperating ? (
@@ -646,8 +646,8 @@ const Service = () => {
               <div className="flex gap-3">
                 <Button
                   className={`flex-1 h-11 ${config?.tts_engine === 'gpt_sovits'
-                      ? 'bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-md'
-                      : 'bg-white/50 text-muted-foreground hover:bg-white/80'
+                    ? 'bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-md'
+                    : 'bg-white/50 text-muted-foreground hover:bg-white/80'
                     }`}
                   onClick={() => updateConfig('tts_engine', 'gpt_sovits')}
                 >
@@ -831,9 +831,26 @@ const Service = () => {
                   className="data-[state=checked]:bg-indigo-500"
                 />
               </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>最大并发数</Label>
+                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_max_concurrent ?? 3}</span>
+                </div>
+                <Slider
+                  value={[config?.antigravity_max_concurrent ?? 3]}
+                  onValueChange={([value]) => updateConfig('antigravity_max_concurrent', value)}
+                  min={1}
+                  max={10}
+                  step={1}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  允许同时处理的最大请求数。每个请求创建独立会话，互不干扰。
+                </p>
+              </div>
               <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700 space-y-1">
-                <p>开启桥接后，/api/chat 与 /api/generate 会优先走内置 LS 桥接，不会自动回落到外部模型 API。</p>
-                <p>桥接请求按 FIFO 串行执行，吞吐会低于并行直连模式，高并发场景请谨慎开启。</p>
+                <p>开启桥接后，/api/chat、/api/generate、/v1/chat/completions 会走内置 LS 桥接。</p>
+                <p>支持并发：每个请求创建独立 cascade 会话，通过 Semaphore 控制最大并发数。</p>
               </div>
             </CardContent>
           )}
