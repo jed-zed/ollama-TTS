@@ -75,7 +75,7 @@ pub async fn get_proxy_status(
     
     let status = ProxyStatus {
         running: is_running,
-        main_port: 8765,
+        main_port: config.main_api_port,
         proxy_port: 11434,
         api_configured: !config.api_url.is_empty(),
         last_test_result: None,

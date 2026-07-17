@@ -52,7 +52,11 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     try {
       const response = await memoryService.compressAll();
       if (response.success && response.data) {
-        set({ compressionProgress: response.data.message || '压缩完成' });
+        const message =
+          'message' in response.data && typeof response.data.message === 'string'
+            ? response.data.message
+            : '压缩完成';
+        set({ compressionProgress: message });
       }
       await get().refreshStatus();
     } finally {

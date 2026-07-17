@@ -227,10 +227,12 @@ const Service = () => {
     }
   };
 
-  // 初始化检查后端
+  // 初始化检查后端（延迟 500ms，让 UI 先渲染）
   useEffect(() => {
-    handleCheckBackend();
-    checkProxyStatus();
+    const timer = setTimeout(() => {
+      handleCheckBackend();
+      checkProxyStatus();
+    }, 500);
 
     const setupListeners = async () => {
       const unlistenStarted = await listen('backend-started', () => {
@@ -253,6 +255,7 @@ const Service = () => {
     const cleanupPromise = setupListeners();
 
     return () => {
+      clearTimeout(timer);
       cleanupPromise.then(cleanup => cleanup());
     };
   }, []);
@@ -609,7 +612,7 @@ const Service = () => {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                加 -preview: <span className="text-primary cursor-pointer hover:underline" onClick={handleCopyWithPreview}>{localModelName}-preview</span>
+                请直接点击上方按钮复制再粘贴入游戏
               </p>
               {proxyStatus === 'running' && (
                 <p className="text-xs text-amber-600 mt-2">
@@ -752,6 +755,26 @@ const Service = () => {
           </CardContent>
         </Card>
 
+        {/* 局域网开放 */}
+        <Card className="glass border-none shadow-custom col-span-2">
+          <CardContent className="pt-6">
+            <div className="flex flex-row items-center justify-between rounded-lg border border-gray-200 p-3 bg-white">
+              <div className="space-y-0.5">
+                <Label className="text-base font-medium">🌐 局域网开放</Label>
+                <p className="text-xs text-muted-foreground">
+                  开启后服务器绑定 0.0.0.0，允许局域网内其他设备（如手机、平板）通过本机 IP 访问。
+                  <span className="text-amber-600 font-medium">修改后需重启代理服务器生效。</span>
+                </p>
+              </div>
+              <Switch
+                checked={config?.lan_access_enabled || false}
+                onCheckedChange={(checked) => updateConfig('lan_access_enabled', checked)}
+                className="data-[state=checked]:bg-green-500"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="glass border-none shadow-custom col-span-2">
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
@@ -760,7 +783,7 @@ const Service = () => {
                   <Network className="h-5 w-5" />
                 </div>
                 <div>
-                  <CardTitle>Antigravity 自动化桥接</CardTitle>
+                  <CardTitle>Antigravity 自动化桥接（实验性功能）</CardTitle>
                   <CardDescription>开启后将不再走 API，改为 UI 自动化桥接</CardDescription>
                 </div>
               </div>
@@ -830,6 +853,61 @@ const Service = () => {
                   onCheckedChange={(checked) => updateConfig('antigravity_include_thinking', checked)}
                   className="data-[state=checked]:bg-indigo-500"
                 />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
+                <div className="space-y-0.5">
+                  <Label>🌊 流式传输</Label>
+                  <p className="text-xs text-muted-foreground">开启后桥接响应将实时流式返回，而不是等待完整回复。适合长文本生成场景。</p>
+                </div>
+                <Switch
+                  checked={config?.antigravity_stream_enabled || false}
+                  onCheckedChange={(checked) => updateConfig('antigravity_stream_enabled', checked)}
+                  className="data-[state=checked]:bg-indigo-500"
+                />
+              </div>
+              {config?.antigravity_stream_enabled && (
+                <div className="rounded-lg border border-indigo-100 p-3 bg-white/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>⏱️ 流式输出速度</Label>
+                      <p className="text-xs text-muted-foreground">每个字符的输出间隔（ms），越小越快。</p>
+                    </div>
+                    <span className="text-sm font-mono font-medium text-indigo-600">{config?.antigravity_stream_char_delay || 20}ms</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={5}
+                    max={100}
+                    step={5}
+                    value={config?.antigravity_stream_char_delay || 20}
+                    onChange={(e) => updateConfig('antigravity_stream_char_delay', Number(e.target.value))}
+                    className="w-full h-2 bg-indigo-100 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>5ms (极快)</span>
+                    <span>50ms (适中)</span>
+                    <span>100ms (慢)</span>
+                  </div>
+                </div>
+              )}
+              {/* 桥接模型选择 */}
+              <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-2">
+                <div className="space-y-0.5">
+                  <Label>桥接模型</Label>
+                  <p className="text-xs text-muted-foreground">选择 Antigravity 桥接使用的 AI 模型。</p>
+                </div>
+                <select
+                  value={config?.antigravity_bridge_model_id || 'MODEL_PLACEHOLDER_M18'}
+                  onChange={(e) => updateConfig('antigravity_bridge_model_id', e.target.value)}
+                  className="w-full h-9 rounded-md border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="MODEL_PLACEHOLDER_M18">Gemini 3 Flash</option>
+                  <option value="MODEL_PLACEHOLDER_M36">Gemini 3.1 Pro (Low)</option>
+                  <option value="MODEL_PLACEHOLDER_M37">Gemini 3.1 Pro (High)</option>
+                  <option value="MODEL_PLACEHOLDER_M35">Claude Sonnet 4.6 (Thinking)</option>
+                  <option value="MODEL_PLACEHOLDER_M26">Claude Opus 4.6 (Thinking)</option>
+                  <option value="MODEL_OPENAI_GPT_OSS_120B_MEDIUM">GPT-OSS 120B (Medium)</option>
+                </select>
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between items-center">

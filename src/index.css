@@ -120,7 +120,6 @@
       radial-gradient(at 100% 0%, rgba(14, 165, 233, 0.05) 0px, transparent 50%),
       radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.05) 0px, transparent 50%),
       radial-gradient(at 0% 100%, rgba(14, 165, 233, 0.05) 0px, transparent 50%);
-    background-attachment: fixed;
   }
 }
 
@@ -129,7 +128,7 @@
     box-shadow: var(--shadow-x) var(--shadow-y) var(--shadow-blur) var(--shadow-spread) var(--shadow-color);
   }
   .glass {
-    @apply bg-white/70 backdrop-blur-md border border-white/50;
+    @apply bg-white/90 border border-white/60 shadow-sm;
   }
 }
 

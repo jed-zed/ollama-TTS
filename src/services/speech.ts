@@ -3,7 +3,7 @@
  * 提供录音和语音识别功能，支持百度和讯飞双引擎
  */
 
-import { API_BASE_URL } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 
 export type SpeechEngine = 'baidu' | 'xunfei';
 
@@ -142,7 +142,7 @@ class SpeechService {
   }
 
   private async recognizeWithBaidu(base64Audio: string, config: BaiduSpeechConfig): Promise<RecognizeResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/speech/recognize`, {
+    const response = await fetch(`${getBackendBaseUrl()}/api/speech/recognize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -162,7 +162,7 @@ class SpeechService {
   }
 
   private async recognizeWithXunfei(base64Audio: string, config: XunfeiSpeechConfig): Promise<RecognizeResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/speech/xunfei/recognize`, {
+    const response = await fetch(`${getBackendBaseUrl()}/api/speech/xunfei/recognize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

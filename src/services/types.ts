@@ -29,6 +29,7 @@ export interface HistoryCompressionConfig {
   backup_before_compress: boolean;
   backup_dir: string;
   enabled: boolean;
+  /** @deprecated 仅用于读取旧版缓存；提交前应转换为 enabled。 */
   auto_compress?: boolean;
   custom_prompt: string;
 }
@@ -111,6 +112,12 @@ export interface Config {
   // 纯文字模式（隐藏控件、边框、装饰，只显示文字）
   subtitle_text_only: boolean;
 
+  // 隐藏输入框（单独隐藏底部输入区域）
+  subtitle_hide_input: boolean;
+
+  // 隐藏控件（隐藏字幕窗口顶部工具栏）
+  subtitle_hide_controls: boolean;
+
   // 用户自定义颜色预设
   custom_font_colors?: Record<string, string>;
   custom_bg_colors?: Record<string, string>;
@@ -125,9 +132,15 @@ export interface Config {
   // 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
   paste_mode: 'direct' | 'ahk';
 
+  // 局域网开放
+  lan_access_enabled: boolean;
+
   antigravity_bridge_enabled: boolean;
   antigravity_include_thinking: boolean;
+  antigravity_stream_enabled: boolean;
+  antigravity_bridge_model_id: string;
   antigravity_max_concurrent: number;
+  antigravity_stream_char_delay: number;
   antigravity_window_title: string;
   antigravity_timeout_ms: number;
   antigravity_max_retries: number;

@@ -134,12 +134,16 @@ impl ProxyServerManager {
             inner.shutdown_tx = Some(shutdown_tx);
         }
 
+        let config = self.config_store.get();
+
         let state = ProxyAppState {
             config_store: self.config_store.clone(),
             broadcaster: self.broadcaster.clone(),
             gsv_engine: self.gsv_engine.clone(),
             tts_manager: self.tts_manager.clone(),
-            bridge: Arc::new(AntigravityBridge::new()),
+            bridge: Arc::new(AntigravityBridge::with_concurrency(
+                config.antigravity_max_concurrent.max(1) as usize
+            )),
         };
         
         if self.gsv_engine.is_some() && self.tts_manager.is_some() {
@@ -159,7 +163,13 @@ impl ProxyServerManager {
             .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
             .layer(cors);
 
-        let addr = SocketAddr::from(([127, 0, 0, 1], 11434));
+        // 根据配置决定绑定地址：局域网开放 → 0.0.0.0，否则 → 127.0.0.1
+        let bind_ip: [u8; 4] = if config.lan_access_enabled {
+            [0, 0, 0, 0]
+        } else {
+            [127, 0, 0, 1]
+        };
+        let addr = SocketAddr::from((bind_ip, 11434));
 
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => l,

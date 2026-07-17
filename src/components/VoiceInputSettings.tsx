@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useConfig, useConfigStore } from '@/stores/configStore';
-import { API_BASE_URL } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 import { toast } from 'sonner';
 import { speechService } from '@/services/speech';
 import type { SpeechEngine } from '@/services/speech';
@@ -191,7 +191,7 @@ const VoiceInputSettings = () => {
     setTestMessage('正在通过后端代理连接百度鉴权接口...');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/speech/baidu/test`, {
+      const response = await fetch(`${getBackendBaseUrl()}/api/speech/baidu/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -233,7 +233,7 @@ const VoiceInputSettings = () => {
     setTestMessage('正在通过后端代理连接讯飞语音接口...');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/speech/xunfei/test`, {
+      const response = await fetch(`${getBackendBaseUrl()}/api/speech/xunfei/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -340,6 +340,7 @@ const VoiceInputSettings = () => {
           <div className="flex items-center gap-3">
             <Label className="text-sm shrink-0">粘贴模式</Label>
             <Select value={pasteMode} onValueChange={(v) => {
+              if (v !== 'direct' && v !== 'ahk') return;
               updateConfig('paste_mode', v);
               globalShortcutService.loadSpeechConfig();
               toast.success(`粘贴模式已切换为: ${v === 'ahk' ? 'AutoHotkey (Ctrl+Shift+V)' : '直接粘贴 (Ctrl+V)'}`);

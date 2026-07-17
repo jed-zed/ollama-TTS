@@ -148,7 +148,7 @@ export async function getConfig(): Promise<ApiResponse<Config>> {
 export async function updateConfig(
   config: Partial<Config>
 ): Promise<ApiResponse<{ success: boolean }>> {
-  const response = await apiClient.put('/api/config', config);
+  const response = await apiClient.put<{ success: boolean }>('/api/config', config);
   
   // 更新成功后清除缓存，让下次读取从服务器获取最新配置
   if (response.success) {

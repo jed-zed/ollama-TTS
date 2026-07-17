@@ -186,6 +186,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
+        assert_eq!(config.main_api_port, 8765);
         assert!(config.tts_enabled);
         assert_eq!(config.gsv_api_url, "http://localhost:9880/tts");
     }

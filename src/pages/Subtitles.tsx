@@ -78,6 +78,8 @@ const Subtitles = () => {
   const speedId = useId();
   const autoCloseId = useId();
   const textOnlyId = useId();
+  const hideControlsId = useId();
+  const hideInputId = useId();
 
   // 从 store 获取状态
   const config = useConfig();
@@ -178,7 +180,7 @@ const Subtitles = () => {
   const { displayedText: streamTypedText, isTyping: streamIsTyping } = useTypewriter(currentContent || '', {
     charDelay,
   });
-  
+
   // 最终显示的文本：历史记录直接显示，当前内容使用打字机效果
   const finalDisplayText = selectedHistoryContent || streamTypedText;
 
@@ -321,489 +323,516 @@ const Subtitles = () => {
       <div className="grid grid-cols-12 gap-6 flex-1 min-h-0">
         {/* Controls Section */}
         <div className="col-span-4 flex flex-col gap-6 overflow-auto pr-2">
-            {/* 窗口控制 */}
-            <Card className="glass border-none shadow-custom">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <AppWindow className="w-4 h-4 text-pink-500" aria-hidden="true" />
-                  窗口控制
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3" role="group" aria-label="字幕窗口控制按钮">
-                   <Button
-                    variant="outline"
-                    className="w-full shadow-sm hover:bg-pink-50 hover:text-pink-600 hover:border-pink-200"
-                    onClick={() => showSubtitle(true)}
-                  >
-                    <Eye className="w-4 h-4 mr-2" aria-hidden="true" /> 显示字幕
-                  </Button>
-                   <Button
-                     variant="outline"
-                     className="w-full text-muted-foreground hover:bg-slate-100"
-                     onClick={hideSubtitle}
-                   >
-                     <EyeOff className="w-4 h-4 mr-2" aria-hidden="true" /> 隐藏字幕
-                   </Button>
-                   <Button
-                     variant="outline"
-                     className="w-full text-muted-foreground"
-                     aria-pressed="false"
-                   >
-                     <LayoutTemplate className="w-4 h-4 mr-2" aria-hidden="true" /> 显示控件
-                   </Button>
-                   <Button
-                     variant="outline"
-                     className="w-full text-muted-foreground hover:text-destructive hover:bg-red-50 hover:border-red-200"
-                     onClick={handleClearContent}
-                   >
-                     <Eraser className="w-4 h-4 mr-2" aria-hidden="true" /> 清空内容
-                   </Button>
-                </div>
+          {/* 窗口控制 */}
+          <Card className="glass border-none shadow-custom">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <AppWindow className="w-4 h-4 text-pink-500" aria-hidden="true" />
+                窗口控制
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3" role="group" aria-label="字幕窗口控制按钮">
+                <Button
+                  variant="outline"
+                  className="w-full shadow-sm hover:bg-pink-50 hover:text-pink-600 hover:border-pink-200"
+                  onClick={() => showSubtitle(true)}
+                >
+                  <Eye className="w-4 h-4 mr-2" aria-hidden="true" /> 显示字幕
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full text-muted-foreground hover:bg-slate-100"
+                  onClick={hideSubtitle}
+                >
+                  <EyeOff className="w-4 h-4 mr-2" aria-hidden="true" /> 隐藏字幕
+                </Button>
+                <Button
+                  variant="outline"
+                  className={`w-full ${config?.subtitle_hide_controls ? 'text-pink-600 border-pink-200 bg-pink-50' : 'text-muted-foreground'}`}
+                  onClick={() => updateConfig('subtitle_hide_controls', !(config?.subtitle_hide_controls ?? false))}
+                >
+                  <LayoutTemplate className="w-4 h-4 mr-2" aria-hidden="true" /> {config?.subtitle_hide_controls ? '显示控件' : '隐藏控件'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full text-muted-foreground hover:text-destructive hover:bg-red-50 hover:border-red-200"
+                  onClick={handleClearContent}
+                >
+                  <Eraser className="w-4 h-4 mr-2" aria-hidden="true" /> 清空内容
+                </Button>
+              </div>
 
-                {/* 历史记录 */}
-                <div className="pt-3 border-t">
-                  <Label className="flex items-center gap-2 mb-2 text-sm">
-                    <History className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
-                    历史记录
-                  </Label>
-                  <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={historyOptions.length > 0 ? "选择历史记录查看" : "暂无历史记录"} />
+              {/* 历史记录 */}
+              <div className="pt-3 border-t">
+                <Label className="flex items-center gap-2 mb-2 text-sm">
+                  <History className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
+                  历史记录
+                </Label>
+                <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={historyOptions.length > 0 ? "选择历史记录查看" : "暂无历史记录"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {historyOptions.length === 0 ? (
+                      <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
+                    ) : (
+                      historyOptions.map((item, index) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">#{index + 1}</span>
+                            <span className="truncate max-w-[180px]">
+                              {item.content.slice(0, 30)}{item.content.length > 30 ? '...' : ''}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                {historyOptions.length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    共 {historyOptions.length} 条记录，选择后可在字幕窗口中查看
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 字幕设置 */}
+          <Card className="glass border-none shadow-custom flex-1">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-purple-500" aria-hidden="true" />
+                  字幕设置
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground hover:text-pink-600"
+                  onClick={handleResetDefaults}
+                >
+                  <RotateCcw className="w-3 h-3 mr-1" />
+                  重置默认
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* 字体颜色 */}
+              <div className="space-y-2">
+                <Label htmlFor={fontColorId} className="flex items-center gap-2">
+                  <Type className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
+                  字体颜色
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Select value={selectedFontColor} onValueChange={handleFontColorChange}>
+                    <SelectTrigger id={fontColorId} className="flex-1">
+                      <SelectValue placeholder="选择颜色" />
                     </SelectTrigger>
                     <SelectContent>
-                      {historyOptions.length === 0 ? (
-                        <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
-                      ) : (
-                        historyOptions.map((item, index) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">#{index + 1}</span>
-                              <span className="truncate max-w-[180px]">
-                                {item.content.slice(0, 30)}{item.content.length > 30 ? '...' : ''}
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))
+                      {Object.entries(BUILTIN_FONT_COLORS).map(([key]) => (
+                        <SelectItem key={key} value={key}>{FONT_COLOR_LABELS[key] || key}</SelectItem>
+                      ))}
+                      {Object.entries(config?.custom_font_colors || {}).map(([key, color]) => (
+                        <SelectItem key={key} value={key}>
+                          <span className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
+                            {key}
+                          </span>
+                        </SelectItem>
+                      ))}
+                      {selectedFontColor === 'custom' && (
+                        <SelectItem value="custom" disabled>
+                          <span className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_font_color || '#ffffff' }} />
+                            自定义颜色
+                          </span>
+                        </SelectItem>
                       )}
                     </SelectContent>
                   </Select>
-                  {historyOptions.length > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      共 {historyOptions.length} 条记录，选择后可在字幕窗口中查看
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 字幕设置 */}
-            <Card className="glass border-none shadow-custom flex-1">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Palette className="w-4 h-4 text-purple-500" aria-hidden="true" />
-                    字幕设置
-                  </CardTitle>
+                  <ColorPicker
+                    value={config?.subtitle_font_color || '#ffffff'}
+                    onChange={handleCustomFontColor}
+                  />
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs text-muted-foreground hover:text-pink-600"
-                    onClick={handleResetDefaults}
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    onClick={() => openSaveColorDialog('font')}
+                    title="保存为预设"
                   >
-                    <RotateCcw className="w-3 h-3 mr-1" />
-                    重置默认
+                    <Plus className="h-4 w-4" />
                   </Button>
+                  {selectedFontColor in (config?.custom_font_colors || {}) && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteFontColorPreset(selectedFontColor)}
+                      title="删除此预设"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                 {/* 字体颜色 */}
-                 <div className="space-y-2">
-                    <Label htmlFor={fontColorId} className="flex items-center gap-2">
-                      <Type className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
-                      字体颜色
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <Select value={selectedFontColor} onValueChange={handleFontColorChange}>
-                        <SelectTrigger id={fontColorId} className="flex-1">
-                          <SelectValue placeholder="选择颜色" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(BUILTIN_FONT_COLORS).map(([key]) => (
-                            <SelectItem key={key} value={key}>{FONT_COLOR_LABELS[key] || key}</SelectItem>
-                          ))}
-                          {Object.entries(config?.custom_font_colors || {}).map(([key, color]) => (
-                            <SelectItem key={key} value={key}>
-                              <span className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
-                                {key}
-                              </span>
-                            </SelectItem>
-                          ))}
-                          {selectedFontColor === 'custom' && (
-                            <SelectItem value="custom" disabled>
-                              <span className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_font_color || '#ffffff' }} />
-                                自定义颜色
-                              </span>
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <ColorPicker
-                        value={config?.subtitle_font_color || '#ffffff'}
-                        onChange={handleCustomFontColor}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 shrink-0"
-                        onClick={() => openSaveColorDialog('font')}
-                        title="保存为预设"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                      {selectedFontColor in (config?.custom_font_colors || {}) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteFontColorPreset(selectedFontColor)}
-                          title="删除此预设"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
+              </div>
+
+              {/* 背景颜色 */}
+              <div className="space-y-2">
+                <Label htmlFor={bgColorId} className="flex items-center gap-2">
+                  <Palette className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
+                  背景颜色
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Select value={selectedBgColor} onValueChange={handleBgColorChange}>
+                    <SelectTrigger id={bgColorId} className="flex-1">
+                      <SelectValue placeholder="选择颜色" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(BUILTIN_BG_COLORS).map(([key]) => (
+                        <SelectItem key={key} value={key}>{BG_COLOR_LABELS[key] || key}</SelectItem>
+                      ))}
+                      {Object.entries(config?.custom_bg_colors || {}).map(([key, color]) => (
+                        <SelectItem key={key} value={key}>
+                          <span className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
+                            {key}
+                          </span>
+                        </SelectItem>
+                      ))}
+                      {selectedBgColor === 'custom' && (
+                        <SelectItem value="custom" disabled>
+                          <span className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_bg_color || '#000000' }} />
+                            自定义颜色
+                          </span>
+                        </SelectItem>
                       )}
-                    </div>
-                 </div>
+                    </SelectContent>
+                  </Select>
+                  <ColorPicker
+                    value={config?.subtitle_bg_color || '#000000'}
+                    onChange={handleCustomBgColor}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    onClick={() => openSaveColorDialog('bg')}
+                    title="保存为预设"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                  {selectedBgColor in (config?.custom_bg_colors || {}) && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteBgColorPreset(selectedBgColor)}
+                      title="删除此预设"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
 
-                 {/* 背景颜色 */}
-                 <div className="space-y-2">
-                    <Label htmlFor={bgColorId} className="flex items-center gap-2">
-                      <Palette className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
-                      背景颜色
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <Select value={selectedBgColor} onValueChange={handleBgColorChange}>
-                        <SelectTrigger id={bgColorId} className="flex-1">
-                          <SelectValue placeholder="选择颜色" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(BUILTIN_BG_COLORS).map(([key]) => (
-                            <SelectItem key={key} value={key}>{BG_COLOR_LABELS[key] || key}</SelectItem>
-                          ))}
-                          {Object.entries(config?.custom_bg_colors || {}).map(([key, color]) => (
-                            <SelectItem key={key} value={key}>
-                              <span className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: color }} />
-                                {key}
-                              </span>
-                            </SelectItem>
-                          ))}
-                          {selectedBgColor === 'custom' && (
-                            <SelectItem value="custom" disabled>
-                              <span className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full border border-border inline-block" style={{ backgroundColor: config?.subtitle_bg_color || '#000000' }} />
-                                自定义颜色
-                              </span>
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <ColorPicker
-                        value={config?.subtitle_bg_color || '#000000'}
-                        onChange={handleCustomBgColor}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 shrink-0"
-                        onClick={() => openSaveColorDialog('bg')}
-                        title="保存为预设"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                      {selectedBgColor in (config?.custom_bg_colors || {}) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteBgColorPreset(selectedBgColor)}
-                          title="删除此预设"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                 </div>
+              {/* 不透明度 */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label htmlFor={opacityId}>不透明度</Label>
+                  <span className="text-xs text-primary font-medium">{opacity}%</span>
+                </div>
+                <Slider
+                  id={opacityId}
+                  value={[opacity]}
+                  onValueChange={handleOpacityChange}
+                  max={100}
+                  min={0}
+                  step={5}
+                  className="py-2"
+                  aria-label="不透明度"
+                />
+              </div>
 
-                 {/* 不透明度 */}
-                 <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor={opacityId}>不透明度</Label>
-                      <span className="text-xs text-primary font-medium">{opacity}%</span>
-                    </div>
-                    <Slider
-                      id={opacityId}
-                      value={[opacity]}
-                      onValueChange={handleOpacityChange}
-                      max={100}
-                      min={0}
-                      step={5}
-                      className="py-2"
-                      aria-label="不透明度"
-                    />
-                 </div>
+              {/* 字体大小 */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label htmlFor={fontSizeId}>字体大小</Label>
+                  <span className="text-xs text-primary font-medium">{fontSize}px</span>
+                </div>
+                <Slider
+                  id={fontSizeId}
+                  value={[fontSize]}
+                  onValueChange={handleFontSizeChange}
+                  min={12}
+                  max={36}
+                  step={1}
+                  className="py-2"
+                  aria-label="字体大小"
+                />
+              </div>
 
-                 {/* 字体大小 */}
-                 <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor={fontSizeId}>字体大小</Label>
-                      <span className="text-xs text-primary font-medium">{fontSize}px</span>
-                    </div>
-                    <Slider
-                      id={fontSizeId}
-                      value={[fontSize]}
-                      onValueChange={handleFontSizeChange}
-                      min={12}
-                      max={36}
-                      step={1}
-                      className="py-2"
-                      aria-label="字体大小"
-                    />
-                 </div>
+              {/* 打字速度 */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label htmlFor={speedId} className="flex items-center gap-2">
+                    <Zap className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
+                    打字速度
+                  </Label>
+                  <span className="text-xs text-primary font-medium">{speed}ms</span>
+                </div>
+                <Slider
+                  id={speedId}
+                  value={[speed]}
+                  onValueChange={handleSpeedChange}
+                  min={10}
+                  max={100}
+                  step={5}
+                  className="py-2"
+                  aria-label="打字速度"
+                />
+              </div>
 
-                 {/* 打字速度 */}
-                 <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor={speedId} className="flex items-center gap-2">
-                        <Zap className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
-                        打字速度
-                      </Label>
-                      <span className="text-xs text-primary font-medium">{speed}ms</span>
-                    </div>
-                    <Slider
-                      id={speedId}
-                      value={[speed]}
-                      onValueChange={handleSpeedChange}
-                      min={10}
-                      max={100}
-                      step={5}
-                      className="py-2"
-                      aria-label="打字速度"
-                    />
-                 </div>
+              {/* 自动关闭延迟 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={autoCloseId} className="text-sm cursor-pointer">完成后自动关闭</Label>
+                  <p className="text-xs text-muted-foreground" id={`${autoCloseId}-desc`}>{autoCloseDelay[0]} 秒后隐藏</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Slider
+                    value={autoCloseDelay}
+                    onValueChange={(value) => updateConfig('subtitle_auto_hide_delay', value[0])}
+                    min={1}
+                    max={30}
+                    step={1}
+                    className="w-20"
+                    aria-label="自动关闭延迟"
+                    disabled={!autoClose}
+                  />
+                  <Switch
+                    id={autoCloseId}
+                    checked={autoClose}
+                    onCheckedChange={(checked) => updateConfig('subtitle_auto_hide', checked)}
+                    aria-describedby={`${autoCloseId}-desc`}
+                  />
+                </div>
+              </div>
 
-                 {/* 自动关闭延迟 */}
-                 <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                       <Label htmlFor={autoCloseId} className="text-sm cursor-pointer">完成后自动关闭</Label>
-                       <p className="text-xs text-muted-foreground" id={`${autoCloseId}-desc`}>{autoCloseDelay[0]} 秒后隐藏</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Slider
-                        value={autoCloseDelay}
-                        onValueChange={(value) => updateConfig('subtitle_auto_hide_delay', value[0])}
-                        min={1}
-                        max={30}
-                        step={1}
-                        className="w-20"
-                        aria-label="自动关闭延迟"
-                        disabled={!autoClose}
-                      />
-                      <Switch
-                        id={autoCloseId}
-                        checked={autoClose}
-                        onCheckedChange={(checked) => updateConfig('subtitle_auto_hide', checked)}
-                        aria-describedby={`${autoCloseId}-desc`}
-                      />
-                    </div>
-                 </div>
+              {/* 鼠标穿透 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={mousePassId} className="text-sm cursor-pointer">鼠标穿透</Label>
+                  <p className="text-xs text-muted-foreground" id={`${mousePassId}-desc`}>点击穿透到下层窗口</p>
+                </div>
+                <Switch
+                  id={mousePassId}
+                  checked={mousePassThrough}
+                  onCheckedChange={setMousePassThrough}
+                  aria-describedby={`${mousePassId}-desc`}
+                />
+              </div>
 
-                 {/* 鼠标穿透 */}
-                 <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                       <Label htmlFor={mousePassId} className="text-sm cursor-pointer">鼠标穿透</Label>
-                       <p className="text-xs text-muted-foreground" id={`${mousePassId}-desc`}>点击穿透到下层窗口</p>
-                    </div>
-                    <Switch
-                      id={mousePassId}
-                      checked={mousePassThrough}
-                      onCheckedChange={setMousePassThrough}
-                      aria-describedby={`${mousePassId}-desc`}
-                    />
-                 </div>
+              {/* 自动显示 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={autoShowId} className="text-sm cursor-pointer">自动显示</Label>
+                  <p className="text-xs text-muted-foreground" id={`${autoShowId}-desc`}>有新内容时自动弹出</p>
+                </div>
+                <Switch
+                  id={autoShowId}
+                  checked={autoShow}
+                  onCheckedChange={(checked) => updateConfig('subtitle_auto_show', checked)}
+                  aria-describedby={`${autoShowId}-desc`}
+                />
+              </div>
 
-                 {/* 自动显示 */}
-                 <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                       <Label htmlFor={autoShowId} className="text-sm cursor-pointer">自动显示</Label>
-                       <p className="text-xs text-muted-foreground" id={`${autoShowId}-desc`}>有新内容时自动弹出</p>
-                    </div>
-                    <Switch
-                      id={autoShowId}
-                      checked={autoShow}
-                      onCheckedChange={(checked) => updateConfig('subtitle_auto_show', checked)}
-                      aria-describedby={`${autoShowId}-desc`}
-                    />
-                 </div>
+              {/* 纯文字模式 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={textOnlyId} className="text-sm cursor-pointer">纯文字模式</Label>
+                  <p className="text-xs text-muted-foreground" id={`${textOnlyId}-desc`}>隐藏控件、边框和背景，只显示文字</p>
+                </div>
+                <Switch
+                  id={textOnlyId}
+                  checked={config?.subtitle_text_only ?? false}
+                  onCheckedChange={(checked) => updateConfig('subtitle_text_only', checked)}
+                  aria-describedby={`${textOnlyId}-desc`}
+                />
+              </div>
 
-                 {/* 纯文字模式 */}
-                 <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                       <Label htmlFor={textOnlyId} className="text-sm cursor-pointer">纯文字模式</Label>
-                       <p className="text-xs text-muted-foreground" id={`${textOnlyId}-desc`}>隐藏控件、边框和背景，只显示文字</p>
-                    </div>
-                    <Switch
-                      id={textOnlyId}
-                      checked={config?.subtitle_text_only ?? false}
-                      onCheckedChange={(checked) => updateConfig('subtitle_text_only', checked)}
-                      aria-describedby={`${textOnlyId}-desc`}
-                    />
-                 </div>
-              </CardContent>
-            </Card>
+              {/* 隐藏控件 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={hideControlsId} className="text-sm cursor-pointer">隐藏控件</Label>
+                  <p className="text-xs text-muted-foreground" id={`${hideControlsId}-desc`}>隐藏字幕窗口顶部工具栏</p>
+                </div>
+                <Switch
+                  id={hideControlsId}
+                  checked={config?.subtitle_hide_controls ?? false}
+                  onCheckedChange={(checked) => updateConfig('subtitle_hide_controls', checked)}
+                  aria-describedby={`${hideControlsId}-desc`}
+                />
+              </div>
+
+              {/* 隐藏输入框 */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor={hideInputId} className="text-sm cursor-pointer">隐藏输入框</Label>
+                  <p className="text-xs text-muted-foreground" id={`${hideInputId}-desc`}>隐藏字幕窗口底部输入区域</p>
+                </div>
+                <Switch
+                  id={hideInputId}
+                  checked={config?.subtitle_hide_input ?? false}
+                  onCheckedChange={(checked) => updateConfig('subtitle_hide_input', checked)}
+                  aria-describedby={`${hideInputId}-desc`}
+                />
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Preview Section */}
         <div className="col-span-8 flex flex-col gap-6">
-            <Card className="flex-1 glass border-none shadow-custom relative overflow-hidden flex flex-col">
-               <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-pink-50 opacity-50 z-0" aria-hidden="true" />
-               {/* Background decoration */}
-               <div
-                 className="absolute inset-0 z-0 opacity-20"
-                 style={{
-                   background: 'radial-gradient(ellipse at top right, rgba(147, 51, 234, 0.3), transparent 60%), radial-gradient(ellipse at bottom left, rgba(59, 130, 246, 0.3), transparent 60%)',
-                 }}
-                 aria-hidden="true"
-               />
+          <Card className="flex-1 glass border-none shadow-custom relative overflow-hidden flex flex-col">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-pink-50 opacity-50 z-0" aria-hidden="true" />
+            {/* Background decoration */}
+            <div
+              className="absolute inset-0 z-0 opacity-20"
+              style={{
+                background: 'radial-gradient(ellipse at top right, rgba(147, 51, 234, 0.3), transparent 60%), radial-gradient(ellipse at bottom left, rgba(59, 130, 246, 0.3), transparent 60%)',
+              }}
+              aria-hidden="true"
+            />
 
-               <Tabs value={previewMode} onValueChange={setPreviewMode} className="flex-1 flex flex-col">
-               <CardHeader className="relative z-10 border-b border-white/20 bg-white/30 backdrop-blur-sm">
-                 <div className="flex justify-between items-center">
-                    <CardTitle>实时预览</CardTitle>
-                    <TabsList className="grid w-[240px] grid-cols-2 h-8">
-                      <TabsTrigger value="subtitle" className="text-xs">📜 字幕页面</TabsTrigger>
-                      <TabsTrigger value="stream" className="text-xs">💬 流式窗口</TabsTrigger>
-                    </TabsList>
-                 </div>
-               </CardHeader>
+            <Tabs value={previewMode} onValueChange={setPreviewMode} className="flex-1 flex flex-col">
+              <CardHeader className="relative z-10 border-b border-white/20 bg-white/30 backdrop-blur-sm">
+                <div className="flex justify-between items-center">
+                  <CardTitle>实时预览</CardTitle>
+                  <TabsList className="grid w-[240px] grid-cols-2 h-8">
+                    <TabsTrigger value="subtitle" className="text-xs">📜 字幕页面</TabsTrigger>
+                    <TabsTrigger value="stream" className="text-xs">💬 流式窗口</TabsTrigger>
+                  </TabsList>
+                </div>
+              </CardHeader>
 
-               <CardContent className="relative z-10 flex-1 flex flex-col">
-                    {/* 字幕页面模式 */}
-                    <TabsContent value="subtitle" className="flex-1 flex flex-col items-center justify-end pb-8 px-8 mt-0">
-                      <div className="w-full text-center mb-6 text-muted-foreground text-sm font-medium bg-white/40 px-3 py-1 rounded-full inline-block backdrop-blur-sm">
-                        字幕页面 - Galgame 风格悬浮字幕
+              <CardContent className="relative z-10 flex-1 flex flex-col">
+                {/* 字幕页面模式 */}
+                <TabsContent value="subtitle" className="flex-1 flex flex-col items-center justify-end pb-8 px-8 mt-0">
+                  <div className="w-full text-center mb-6 text-muted-foreground text-sm font-medium bg-white/40 px-3 py-1 rounded-full inline-block backdrop-blur-sm">
+                    字幕页面 - Galgame 风格悬浮字幕
+                  </div>
+                  <GalgameSubtitle selectedHistoryContent={selectedHistoryContent} />
+                </TabsContent>
+
+                {/* 流式窗口模式 */}
+                <TabsContent value="stream" className="flex-1 flex flex-col mt-0">
+                  <div className="w-full text-center mb-4 text-muted-foreground text-sm font-medium bg-white/40 px-3 py-1 rounded-full inline-block backdrop-blur-sm">
+                    流式窗口 - 实时 AI 回复显示
+                  </div>
+
+                  {/* 流式窗口 */}
+                  <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-xl border border-pink-100 shadow-lg overflow-hidden flex flex-col">
+                    {/* 顶部控制栏 */}
+                    <div className="px-4 py-2 bg-gradient-to-r from-pink-50 to-purple-50 border-b border-pink-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-700">AI 回复</span>
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <span className={`w-2 h-2 rounded-full ${connectionStatus === 'connected'
+                              ? 'bg-green-500 motion-safe:animate-pulse'
+                              : connectionStatus === 'connecting'
+                                ? 'bg-yellow-500 motion-safe:animate-pulse'
+                                : 'bg-gray-400'
+                            }`} />
+                          {connectionStatus === 'connected' ? '已连接' : connectionStatus === 'connecting' ? '连接中' : '未连接'}
+                        </span>
                       </div>
-                      <GalgameSubtitle selectedHistoryContent={selectedHistoryContent} />
-                    </TabsContent>
-
-                    {/* 流式窗口模式 */}
-                    <TabsContent value="stream" className="flex-1 flex flex-col mt-0">
-                      <div className="w-full text-center mb-4 text-muted-foreground text-sm font-medium bg-white/40 px-3 py-1 rounded-full inline-block backdrop-blur-sm">
-                        流式窗口 - 实时 AI 回复显示
-                      </div>
-
-                      {/* 流式窗口 */}
-                      <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-xl border border-pink-100 shadow-lg overflow-hidden flex flex-col">
-                        {/* 顶部控制栏 */}
-                        <div className="px-4 py-2 bg-gradient-to-r from-pink-50 to-purple-50 border-b border-pink-100 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-slate-700">AI 回复</span>
-                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <span className={`w-2 h-2 rounded-full ${
-                                connectionStatus === 'connected'
-                                  ? 'bg-green-500 motion-safe:animate-pulse'
-                                  : connectionStatus === 'connecting'
-                                    ? 'bg-yellow-500 motion-safe:animate-pulse'
-                                    : 'bg-gray-400'
-                              }`} />
-                              {connectionStatus === 'connected' ? '已连接' : connectionStatus === 'connecting' ? '连接中' : '未连接'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
-                              <SelectTrigger className="h-7 w-[140px] text-xs">
-                                <ScrollText className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
-                                <SelectValue placeholder={historyOptions.length > 0 ? `历史(${historyOptions.length})` : "暂无历史记录"} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {historyOptions.length === 0 ? (
-                                  <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
-                                ) : (
-                                  historyOptions.map((item, index) => (
-                                    <SelectItem key={item.id} value={item.id}>
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-xs text-muted-foreground">#{index + 1}</span>
-                                        <span className="truncate max-w-[120px]">
-                                          {item.content.slice(0, 20)}{item.content.length > 20 ? '...' : ''}
-                                        </span>
-                                      </div>
-                                    </SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-red-50"
-                              onClick={handleClearContent}
-                            >
-                              <Eraser className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
-                              清空
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* AI 回复内容区域 - 只显示当前内容 */}
-                        <div className="flex-1 p-6 overflow-auto" role="log" aria-live="polite">
-                          <div className="space-y-4">
-                            {!currentContent && !isStreaming && !selectedHistoryContent ? (
-                              <div className="text-center text-muted-foreground py-8">
-                                暂无消息，等待 AI 回复...
-                              </div>
+                      <div className="flex items-center gap-2">
+                        <Select value={selectedHistoryId ?? undefined} onValueChange={handleHistorySelect}>
+                          <SelectTrigger className="h-7 w-[140px] text-xs">
+                            <ScrollText className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+                            <SelectValue placeholder={historyOptions.length > 0 ? `历史(${historyOptions.length})` : "暂无历史记录"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {historyOptions.length === 0 ? (
+                              <SelectItem value="_empty" disabled>暂无历史记录</SelectItem>
                             ) : (
-                              <div className="p-4 bg-white rounded-xl border-2 border-pink-200 shadow-sm">
-                                {selectedHistoryContent && (
-                                  <div className="mb-2 flex items-center gap-2">
-                                    <span className="text-xs text-muted-foreground">📜 查看历史记录</span>
-                                    <button 
-                                      className="text-xs text-pink-500 hover:text-pink-600"
-                                      onClick={() => setSelectedHistoryId(null)}
-                                    >
-                                      返回当前
-                                    </button>
-                                  </div>
-                                )}
-                                <p className="text-slate-700 leading-relaxed">
-                                  {finalDisplayText}
-                                  {!selectedHistoryContent && (isStreaming || streamIsTyping) && (
-                                    <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
-                                  )}
-                                </p>
-                                {!selectedHistoryContent && currentSpeaker && (
-                                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100/50">
-                                    <span className="text-xs text-muted-foreground">
-                                      {currentSpeaker} {currentEmotion && `· ${currentEmotion}`}
+                              historyOptions.map((item, index) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">#{index + 1}</span>
+                                    <span className="truncate max-w-[120px]">
+                                      {item.content.slice(0, 20)}{item.content.length > 20 ? '...' : ''}
                                     </span>
                                   </div>
-                                )}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-red-50"
+                          onClick={handleClearContent}
+                        >
+                          <Eraser className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+                          清空
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* AI 回复内容区域 - 只显示当前内容 */}
+                    <div className="flex-1 p-6 overflow-auto" role="log" aria-live="polite">
+                      <div className="space-y-4">
+                        {!currentContent && !isStreaming && !selectedHistoryContent ? (
+                          <div className="text-center text-muted-foreground py-8">
+                            暂无消息，等待 AI 回复...
+                          </div>
+                        ) : (
+                          <div className="p-4 bg-white rounded-xl border-2 border-pink-200 shadow-sm">
+                            {selectedHistoryContent && (
+                              <div className="mb-2 flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">📜 查看历史记录</span>
+                                <button
+                                  className="text-xs text-pink-500 hover:text-pink-600"
+                                  onClick={() => setSelectedHistoryId(null)}
+                                >
+                                  返回当前
+                                </button>
+                              </div>
+                            )}
+                            <p className="text-slate-700 leading-relaxed">
+                              {finalDisplayText}
+                              {!selectedHistoryContent && (isStreaming || streamIsTyping) && (
+                                <span className="inline-block w-2 h-5 ml-1 bg-pink-400 align-middle motion-safe:animate-pulse" aria-hidden="true" />
+                              )}
+                            </p>
+                            {!selectedHistoryContent && currentSpeaker && (
+                              <div className="flex items-center justify-between mt-3 pt-2 border-t border-pink-100/50">
+                                <span className="text-xs text-muted-foreground">
+                                  {currentSpeaker} {currentEmotion && `· ${currentEmotion}`}
+                                </span>
                               </div>
                             )}
                           </div>
-                        </div>
-
-                        {/* 底部状态栏 */}
-                        <div className="px-4 py-2 bg-slate-50 border-t border-pink-100 flex items-center justify-between text-xs text-muted-foreground">
-                          <span>共 {history.length} 条历史记录</span>
-                          <span>{isStreaming ? '正在输出...' : '等待中'}</span>
-                        </div>
+                        )}
                       </div>
-                    </TabsContent>
-               </CardContent>
-               </Tabs>
-            </Card>
+                    </div>
+
+                    {/* 底部状态栏 */}
+                    <div className="px-4 py-2 bg-slate-50 border-t border-pink-100 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>共 {history.length} 条历史记录</span>
+                      <span>{isStreaming ? '正在输出...' : '等待中'}</span>
+                    </div>
+                  </div>
+                </TabsContent>
+              </CardContent>
+            </Tabs>
+          </Card>
         </div>
       </div>
 

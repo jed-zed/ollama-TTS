@@ -48,8 +48,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -70,11 +70,32 @@ venv.bak/
 # Tauri
 src-tauri/target/
 
+# Local nested repositories and worktrees (not application dependencies)
+/.worktrees/
+/graphrag/
+/oh-my-opencode-dashboard/
+
+# Local research and tooling artifacts (never ship)
+/.opencode/
+/.sisyphus/
+/antigravity-sdk-main/
+/Copilot
+/Kimi
+/Venice
+/Zen
+/antigravity示范.txt
+/model-image-support-research.md
+/verify-opencode-enhanced.ps1
+/实际.txt
+/更新日志.txt
+/检查记录.txt
+
 # Temporary files
 新建 文本文档*.txt
 
 # Test artifacts
 *.png
+!src-tauri/icons/*.png
 test_overlay_*
 
 # Temp files

@@ -10,7 +10,18 @@ import { Separator } from '@/components/ui/separator';
 import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import * as memoryService from '@/services/memory';
+import type { HistoryCompressionConfig } from '@/services/types';
 import { open } from '@tauri-apps/plugin-dialog';
+
+const normalizeHistoryCompression = (
+  config: HistoryCompressionConfig,
+): HistoryCompressionConfig => {
+  const { auto_compress: legacyAutoCompress, ...current } = config;
+  return {
+    ...current,
+    enabled: current.enabled ?? legacyAutoCompress ?? false,
+  };
+};
 
 // 默认压缩提示词模板
 const DEFAULT_PROMPT_TEMPLATE = `请帮我整理压缩以下角色「{character_name}」与玩家「{player_name}」的对话历史。
@@ -139,8 +150,9 @@ const Memory = () => {
   const handleSaveConfig = async () => {
     setIsSaving(true);
     try {
+      if (!config?.history_compression) return;
       const updatedConfig = {
-        ...config?.history_compression,
+        ...normalizeHistoryCompression(config.history_compression),
         save_data_path: localSavePath,
         max_messages: parseInt(localMaxMessages) || 100,
         compress_count: parseInt(localCompressCount) || 70,
@@ -158,8 +170,9 @@ const Memory = () => {
     try {
       await memoryService.savePromptTemplate(localPromptTemplate);
       // 同时更新本地配置
+      if (!config?.history_compression) return;
       const updatedConfig = {
-        ...config?.history_compression,
+        ...normalizeHistoryCompression(config.history_compression),
         custom_prompt: localPromptTemplate,
       };
       await updateConfig('history_compression', updatedConfig);
@@ -180,8 +193,9 @@ const Memory = () => {
 
   // 切换备份开关
   const handleBackupToggle = useCallback((checked: boolean) => {
+    if (!config?.history_compression) return;
     const updatedConfig = {
-      ...config?.history_compression,
+      ...normalizeHistoryCompression(config.history_compression),
       backup_before_compress: checked,
     };
     updateConfig('history_compression', updatedConfig);
@@ -189,9 +203,10 @@ const Memory = () => {
 
   // 切换自动压缩开关
   const handleAutoCompressToggle = useCallback((checked: boolean) => {
+    if (!config?.history_compression) return;
     const updatedConfig = {
-      ...config?.history_compression,
-      auto_compress: checked,
+      ...normalizeHistoryCompression(config.history_compression),
+      enabled: checked,
     };
     updateConfig('history_compression', updatedConfig);
   }, [config?.history_compression, updateConfig]);
@@ -304,7 +319,7 @@ const Memory = () => {
                     <div className="flex items-center space-x-2 bg-white/40 p-2 rounded-lg border border-white/50">
                        <Switch
                          id="auto-compress"
-                         checked={config?.history_compression?.auto_compress ?? false}
+                         checked={config?.history_compression?.enabled ?? config?.history_compression?.auto_compress ?? false}
                          onCheckedChange={handleAutoCompressToggle}
                        />
                        <div className="space-y-0.5">

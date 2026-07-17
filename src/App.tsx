@@ -32,8 +32,8 @@ const preloadPages = () => {
   if ('requestIdleCallback' in window) {
     (window as Window & { requestIdleCallback: (cb: () => void) => void }).requestIdleCallback(preload);
   } else {
-    // 降级方案：延迟 2 秒后预加载
-    setTimeout(preload, 2000);
+    // 降级方案：延迟 3 秒后预加载，给主 UI 更多渲染时间
+    setTimeout(preload, 3000);
   }
 };
 
@@ -59,10 +59,13 @@ const PageLoader = () => (
 // 预加载触发组件 + 配置加载
 const PreloadTrigger = () => {
   const loadConfig = useConfigStore((state) => state.loadConfig);
-  
+
   useEffect(() => {
+    // 立即加载配置（优先级高）
     loadConfig();
-    preloadPages();
+    // 延迟预加载非关键页面，避免与初始渲染竞争
+    const timer = setTimeout(preloadPages, 1000);
+    return () => clearTimeout(timer);
   }, [loadConfig]);
   return null;
 };

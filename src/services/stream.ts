@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from './api';
-import { API_BASE_URL } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 import type {
   ApiResponse,
   StreamMessage,
@@ -59,7 +59,7 @@ export class StreamManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
-  private baseUrl: string;
+  private baseUrl: string | null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastEventTime = 0;
 
@@ -67,7 +67,7 @@ export class StreamManager {
   public onMessage?: (event: StreamEvent) => void;
   public onError?: (error: string) => void;
 
-  constructor(baseUrl: string = API_BASE_URL) {
+  constructor(baseUrl: string | null = null) {
     this.baseUrl = baseUrl;
   }
 
@@ -79,7 +79,8 @@ export class StreamManager {
     this.setStatus('connecting');
 
     try {
-      this.eventSource = new EventSource(`${this.baseUrl}/api/stream/events`);
+      const baseUrl = this.baseUrl ?? getBackendBaseUrl();
+      this.eventSource = new EventSource(`${baseUrl}/api/stream/events`);
       this.lastEventTime = Date.now();
 
       this.eventSource.onopen = () => {

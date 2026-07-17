@@ -221,6 +221,154 @@ fn bridge_generate_stream_response(model: &str, content: &str) -> Response<Body>
         .unwrap()
 }
 
+/// 真正的流式响应：从 mpsc::Receiver 读取增量 delta，缓冲后逐字匀速输出
+/// 同时向 SSE broadcaster 发送事件以触发字幕显示
+fn bridge_chat_real_stream_response(
+    model: String,
+    mut rx: tokio::sync::mpsc::Receiver<String>,
+    broadcaster: Option<Arc<SseBroadcaster>>,
+    char_delay_ms: u64,
+) -> Response<Body> {
+    let stream = async_stream::stream! {
+        // 共享字符缓冲区
+        let buffer: Arc<tokio::sync::Mutex<std::collections::VecDeque<char>>> =
+            Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new()));
+        let rx_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // 后台任务：从 rx 接收 delta 并放入 buffer
+        let buf_clone = Arc::clone(&buffer);
+        let done_clone = Arc::clone(&rx_done);
+        tokio::spawn(async move {
+            while let Some(delta) = rx.recv().await {
+                if !delta.is_empty() {
+                    let mut buf = buf_clone.lock().await;
+                    for c in delta.chars() {
+                        buf.push_back(c);
+                    }
+                }
+            }
+            done_clone.store(true, std::sync::atomic::Ordering::Release);
+        });
+
+        let mut stream_started = false;
+        let delay = std::time::Duration::from_millis(char_delay_ms.max(5));
+
+        loop {
+            // 从 buffer 取一个字符
+            let ch = {
+                let mut buf = buffer.lock().await;
+                buf.pop_front()
+            };
+
+            if let Some(c) = ch {
+                // 启动字幕流
+                if !stream_started {
+                    if let Some(ref bc) = broadcaster {
+                        bc.start_stream();
+                    }
+                    stream_started = true;
+                }
+
+                let ch_str = c.to_string();
+
+                // SSE 字幕事件
+                if let Some(ref bc) = broadcaster {
+                    bc.add_chunk(&ch_str);
+                }
+
+                // NDJSON chunk 给 SillyTavern
+                let chunk = serde_json::json!({
+                    "model": &model,
+                    "created_at": chrono::Utc::now().to_rfc3339(),
+                    "message": {
+                        "role": "assistant",
+                        "content": ch_str,
+                    },
+                    "done": false
+                });
+                yield Ok::<_, std::convert::Infallible>(format!("{}\n", chunk));
+
+                tokio::time::sleep(delay).await;
+            } else if rx_done.load(std::sync::atomic::Ordering::Acquire) {
+                // rx 结束且 buffer 已空 → 完成
+                break;
+            } else {
+                // buffer 暂时为空但 rx 还没结束，短暂等待
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+
+        // 结束字幕流
+        if let Some(ref bc) = broadcaster {
+            if stream_started {
+                bc.end_stream();
+            }
+        }
+        // 发送最终 done chunk
+        let done = serde_json::json!({
+            "model": &model,
+            "created_at": chrono::Utc::now().to_rfc3339(),
+            "message": {
+                "role": "assistant",
+                "content": "",
+            },
+            "done": true
+        });
+        yield Ok::<_, std::convert::Infallible>(format!("{}\n", done));
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/x-ndjson")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+/// 真正的流式响应（OpenAI SSE 格式）
+fn openai_chat_real_stream_response(
+    model: String,
+    mut rx: tokio::sync::mpsc::Receiver<String>,
+) -> Response<Body> {
+    let stream = async_stream::stream! {
+        let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+        while let Some(delta) = rx.recv().await {
+            let chunk = serde_json::json!({
+                "id": &id,
+                "object": "chat.completion.chunk",
+                "created": chrono::Utc::now().timestamp(),
+                "model": &model,
+                "choices": [{
+                    "index": 0,
+                    "delta": { "content": delta },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            });
+            yield Ok::<_, std::convert::Infallible>(format!("data: {}\n\n", chunk));
+        }
+        // 发送 [DONE]
+        let done_chunk = serde_json::json!({
+            "id": format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")),
+            "object": "chat.completion.chunk",
+            "created": chrono::Utc::now().timestamp(),
+            "model": &model,
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+            }]
+        });
+        yield Ok::<_, std::convert::Infallible>(format!("data: {}\n\n", done_chunk));
+        yield Ok::<_, std::convert::Infallible>("data: [DONE]\n\n".to_string());
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
 async fn execute_bridge_waitback(
     state: &ProxyAppState,
     prompt: String,
@@ -228,6 +376,7 @@ async fn execute_bridge_waitback(
     max_retries: i32,
     fallback_enabled: bool,
     include_thinking: bool,
+    model_id: &str,
 ) -> Result<String, String> {
     let retries = max_retries.clamp(0, 3) as usize + 1;
     let mut last_error: Option<String> = None;
@@ -241,7 +390,7 @@ async fn execute_bridge_waitback(
         info!("{}", stage_msg);
         broadcast_log(&state.broadcaster, "INFO", &stage_msg);
 
-        match state.bridge.execute_builtin_ls_waitback(prompt.clone(), timeout_ms, include_thinking).await {
+        match state.bridge.execute_builtin_ls_waitback(prompt.clone(), timeout_ms, include_thinking, model_id).await {
             Ok(content) => {
                 let ok_msg = format!("Antigravity 内置桥接成功: attempt={}/{}", attempt, retries);
                 info!("{}", ok_msg);
@@ -478,6 +627,33 @@ async fn chat(
             return bridge_error_response("bridge input is empty");
         }
 
+        // 流式模式：客户端请求 stream 且配置启用了流式传输
+        if request.stream && config.antigravity_stream_enabled {
+            match state.bridge.execute_builtin_ls_stream(
+                bridge_prompt,
+                config.antigravity_timeout_ms,
+                config.antigravity_include_thinking,
+                &config.antigravity_bridge_model_id,
+            ).await {
+                Ok(rx) => {
+                    broadcast_log(&state.broadcaster, "INFO", "Antigravity 流式桥接已启动");
+                    return bridge_chat_real_stream_response(
+                        request.model.clone(),
+                        rx,
+                        Some(state.broadcaster.clone()),
+                        config.antigravity_stream_char_delay.max(5) as u64,
+                    );
+                }
+                Err(err) => {
+                    let err_msg = format!("Antigravity 流式桥接失败: {}", err);
+                    error!("{}", err_msg);
+                    broadcast_log(&state.broadcaster, "ERROR", &err_msg);
+                    return bridge_error_response(&err_msg);
+                }
+            }
+        }
+
+        // 非流式模式：完整等待
         match execute_bridge_waitback(
             &state,
             bridge_prompt,
@@ -485,6 +661,7 @@ async fn chat(
             config.antigravity_max_retries,
             config.antigravity_pending_submit_fallback_enabled,
             config.antigravity_include_thinking,
+            &config.antigravity_bridge_model_id,
         )
         .await
         {
@@ -597,6 +774,7 @@ async fn generate(
             config.antigravity_max_retries,
             config.antigravity_pending_submit_fallback_enabled,
             config.antigravity_include_thinking,
+            &config.antigravity_bridge_model_id,
         )
         .await
         {
@@ -1495,6 +1673,28 @@ async fn openai_chat_completions(
         }
         info!("OpenAI 桥接 prompt 长度: {} bytes, 前500字符: {}", bridge_prompt.len(), bridge_prompt.chars().take(500).collect::<String>());
 
+        // 流式模式
+        if should_stream && config.antigravity_stream_enabled {
+            match state.bridge.execute_builtin_ls_stream(
+                bridge_prompt,
+                config.antigravity_timeout_ms,
+                config.antigravity_include_thinking,
+                &config.antigravity_bridge_model_id,
+            ).await {
+                Ok(rx) => {
+                    broadcast_log(&state.broadcaster, "INFO", "Antigravity 流式桥接已启动 (OpenAI)");
+                    return openai_chat_real_stream_response(model.to_string(), rx);
+                }
+                Err(err) => {
+                    let err_msg = format!("Antigravity 流式桥接失败 (OpenAI): {}", err);
+                    error!("{}", err_msg);
+                    broadcast_log(&state.broadcaster, "ERROR", &err_msg);
+                    return openai_error_response(&err_msg);
+                }
+            }
+        }
+
+        // 非流式模式
         match execute_bridge_waitback(
             &state,
             bridge_prompt,
@@ -1502,6 +1702,7 @@ async fn openai_chat_completions(
             config.antigravity_max_retries,
             config.antigravity_pending_submit_fallback_enabled,
             config.antigravity_include_thinking,
+            &config.antigravity_bridge_model_id,
         )
         .await
         {
