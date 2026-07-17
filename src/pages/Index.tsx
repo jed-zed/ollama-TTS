@@ -31,7 +31,8 @@ import { useConfigStore, useConfig, useConfigLoading } from '@/stores/configStor
 import { useStreamStore, useStreamHistory, useIsStreaming, useStreamContent, useConnectionStatus } from '@/stores/streamStore';
 import { streamChat } from '@/services/stream';
 import { checkBackendHealth } from '@/services/api';
-import { HEALTH_CHECK_INTERVAL_MS, API_BASE_URL } from '@/lib/constants';
+import { HEALTH_CHECK_INTERVAL_MS } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 import type { ChatMessage, PresetApiConfig } from '@/services/types';
 import { speechService } from '@/services/speech';
 import { BUILTIN_PRESETS } from '@/components/PresetManager';
@@ -53,7 +54,7 @@ const Index = () => {
   const config = useConfig();
   const isConfigLoading = useConfigLoading();
   const updateConfig = useConfigStore((state) => state.updateConfig);
-  const saveConfig = useConfigStore((state) => state.saveConfig);
+  const updateConfigBatch = useConfigStore((state) => state.updateConfigBatch);
 
   const history = useStreamHistory();
   const isStreaming = useIsStreaming();
@@ -226,7 +227,7 @@ const Index = () => {
           return;
         }
 
-        const cfgResp = await fetch(`${API_BASE_URL}/api/config`);
+        const cfgResp = await fetch(`${getBackendBaseUrl()}/api/config`);
         if (!cfgResp.ok) {
           setIsVoiceRecognizing(false);
           return;
@@ -239,8 +240,11 @@ const Index = () => {
         }
 
         const result = await speechService.recognize(audioBlob, {
-          apiKey: cfgData.baidu_api_key,
-          secretKey: cfgData.baidu_secret_key,
+          engine: 'baidu',
+          baidu: {
+            apiKey: cfgData.baidu_api_key,
+            secretKey: cfgData.baidu_secret_key,
+          },
         });
 
         if (result.success && result.text) {
@@ -259,7 +263,10 @@ const Index = () => {
   };
 
   const handleSaveConfig = async () => {
-    await saveConfig();
+    if (!config) return;
+    await updateConfigBatch({
+      system_prompt_injection: config.system_prompt_injection,
+    });
   };
 
   if (isConfigLoading) {
@@ -323,7 +330,7 @@ const Index = () => {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>服务商预设</Label>
-              <Select 
+              <Select
                 value={config?.current_api_preset || 'custom'}
                 onValueChange={(value) => updateConfig('current_api_preset', value)}
               >
@@ -341,10 +348,10 @@ const Index = () => {
 
             <div className="space-y-2">
               <Label>API URL</Label>
-              <Input 
-                value={config?.api_url || ''} 
+              <Input
+                value={config?.api_url || ''}
                 onChange={(e) => updateConfig('api_url', e.target.value)}
-                className="bg-white/50" 
+                className="bg-white/50"
               />
             </div>
 
@@ -399,7 +406,7 @@ const Index = () => {
                   <Network className="h-5 w-5" />
                 </div>
                 <div>
-                  <CardTitle>Antigravity 自动化桥接</CardTitle>
+                  <CardTitle>Antigravity 自动化桥接（实验性功能）</CardTitle>
                   <CardDescription>开启后将不再走 API，改为 UI 自动化桥接</CardDescription>
                 </div>
               </div>
@@ -623,7 +630,7 @@ const Index = () => {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted-foreground w-20">全局默认</span>
-                  <Select 
+                  <Select
                     value={config?.gsv_current_character || 'default'}
                     onValueChange={(value) => updateConfig('gsv_current_character', value)}
                   >
@@ -639,7 +646,7 @@ const Index = () => {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted-foreground w-20">男性默认</span>
-                  <Select 
+                  <Select
                     value={config?.gsv_default_male_character || ''}
                     onValueChange={(value) => updateConfig('gsv_default_male_character', value)}
                   >
@@ -655,7 +662,7 @@ const Index = () => {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted-foreground w-20">女性默认</span>
-                  <Select 
+                  <Select
                     value={config?.gsv_default_female_character || ''}
                     onValueChange={(value) => updateConfig('gsv_default_female_character', value)}
                   >
@@ -744,7 +751,7 @@ const Index = () => {
                       开始与 AI 对话吧！发送消息即可开始。
                     </div>
                   )}
-                  
+
                   {history.map((msg, index) => (
                     <div key={msg.id || index} className="flex gap-3">
                       <Avatar className="w-10 h-10 border-2 border-amber-200 shadow-md">
@@ -817,21 +824,20 @@ const Index = () => {
                     />
                     <Button
                       size="icon"
-                      className={`shrink-0 rounded-full h-10 w-10 ${
-                        isVoiceRecording
+                      className={`shrink-0 rounded-full h-10 w-10 ${isVoiceRecording
                           ? 'bg-red-500 hover:bg-red-600 animate-pulse'
                           : isVoiceRecognizing
                             ? 'bg-blue-500'
                             : 'bg-primary hover:bg-primary/90'
-                      }`}
+                        }`}
                       onClick={handleMicToggle}
                       disabled={isVoiceRecognizing}
                       title={isVoiceRecording ? '点击停止录音' : '点击开始语音输入'}
                     >
                       {isVoiceRecognizing ? <Loader2 className="h-4 w-4 animate-spin" /> : isVoiceRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                     </Button>
-                    <Button 
-                      size="icon" 
+                    <Button
+                      size="icon"
                       className="shrink-0 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 rounded-full h-10 w-10"
                       onClick={handleSendMessage}
                       disabled={isSending || !inputMessage.trim()}

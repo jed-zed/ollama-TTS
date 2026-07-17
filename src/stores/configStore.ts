@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import type { Config, GSVCharacter } from '../services/types';
 import * as configService from '../services/config';
 import { subtitleWindow, isTauri } from '../services/tauri';
@@ -142,6 +142,8 @@ const defaultConfig: Config = {
   subtitle_window_height: 200,
 
   subtitle_text_only: false,
+  subtitle_hide_input: false,
+  subtitle_hide_controls: false,
 
   custom_font_colors: {},
   custom_bg_colors: {},
@@ -153,9 +155,14 @@ const defaultConfig: Config = {
 
   paste_mode: 'direct',
 
+  lan_access_enabled: false,
+
   antigravity_bridge_enabled: false,
   antigravity_include_thinking: false,
+  antigravity_stream_enabled: false,
+  antigravity_bridge_model_id: 'MODEL_PLACEHOLDER_M18',
   antigravity_max_concurrent: 3,
+  antigravity_stream_char_delay: 20,
   antigravity_window_title: 'Antigravity',
   antigravity_timeout_ms: 60000,
   antigravity_max_retries: 0,
@@ -167,12 +174,13 @@ const defaultConfig: Config = {
   fallback_pattern: '^SYSTEM:\\n',
 
   history_compression: {
+    enabled: false,
     save_data_path: '',
     max_messages: 100,
     compress_count: 70,
     check_interval: 10,
     backup_before_compress: true,
-    auto_compress: false,
+    backup_dir: 'compression_backups',
     custom_prompt: '',
   },
 };
@@ -216,7 +224,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     saveConfigToStorage(newConfig);
     broadcastConfigUpdate(newConfig);
 
-    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only', 'subtitle_auto_show', 'subtitle_auto_hide', 'subtitle_auto_hide_delay'];
+    const subtitleKeys = ['subtitle_opacity', 'subtitle_font_color', 'subtitle_bg_color', 'subtitle_font_size', 'char_delay', 'subtitle_text_only', 'subtitle_auto_show', 'subtitle_auto_hide', 'subtitle_auto_hide_delay', 'subtitle_hide_input', 'subtitle_hide_controls'];
     if (subtitleKeys.includes(key as string)) {
       emitConfigToOverlay({ [key]: value });
     }
@@ -275,41 +283,38 @@ export const useConfigError = () => useConfigStore((state) => state.error);
 // TTS 相关选择器 - 使用 shallow 比较防止无限循环
 export const useTTSConfig = () =>
   useConfigStore(
-    (state) => ({
+    useShallow((state) => ({
       enabled: state.config?.tts_enabled ?? true,
       engine: state.config?.tts_engine ?? 'gpt_sovits',
       autoPlay: state.config?.tts_auto_play ?? true,
       volume: state.config?.tts_volume ?? 0.8,
       playMode: state.config?.tts_play_mode ?? 'dialogue',
-    }),
-    shallow
+    }))
   );
 
 // GSV 相关选择器 - 使用 shallow 比较防止无限循环
 export const useGSVConfig = () =>
   useConfigStore(
-    (state) => ({
+    useShallow((state) => ({
       apiUrl: state.config?.gsv_api_url ?? '',
       currentCharacter: state.config?.gsv_current_character ?? '',
       characters: state.config?.gsv_characters ?? {},
       topK: state.config?.gsv_top_k ?? 50,
       topP: state.config?.gsv_top_p ?? 0.9,
       temperature: state.config?.gsv_temperature ?? 1.0,
-    }),
-    shallow
+    }))
   );
 
 // 字幕相关选择器 - 使用 shallow 比较防止无限循环
 export const useSubtitleConfig = () =>
   useConfigStore(
-    (state) => ({
+    useShallow((state) => ({
       charDelay: state.config?.char_delay ?? 30,
       fontColor: state.config?.subtitle_font_color ?? '#ffffff',
       bgColor: state.config?.subtitle_bg_color ?? '#000000',
       opacity: state.config?.subtitle_opacity ?? 0.8,
       fontSize: state.config?.subtitle_font_size ?? 24,
-    }),
-    shallow
+    }))
   );
 
 // BroadcastChannel 监听 - 多页面配置同步

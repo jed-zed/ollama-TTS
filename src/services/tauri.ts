@@ -3,18 +3,22 @@
  * 提供字幕窗口管理、桌面穿透等原生功能
  */
 
-import { API_BASE_URL } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 
 // 检测是否在 Tauri 环境中运行（同步检测，更可靠）
 export const isTauri = (): boolean => {
   if (typeof window === 'undefined') return false;
+
+  const tauriWindow = window as typeof window & {
+    __TAURI_INTERNALS__?: { ipc?: unknown };
+  };
   
   // 检测 Tauri 2.x 的 __TAURI_INTERNALS__ 或 __TAURI__
   const hasTauriInternals = '__TAURI_INTERNALS__' in window;
   const hasTauriGlobal = '__TAURI__' in window;
   
   // 额外检测：Tauri 会注入 ipc 通信对象
-  const hasTauriIpc = !!(window as Record<string, unknown>).__TAURI_INTERNALS__?.ipc;
+  const hasTauriIpc = !!tauriWindow.__TAURI_INTERNALS__?.ipc;
   
   return hasTauriInternals || hasTauriGlobal || hasTauriIpc;
 };
@@ -321,7 +325,7 @@ export const backend = {
    * 获取后端 URL
    */
   async getUrl(): Promise<string> {
-    if (!isTauri() || !invoke) return API_BASE_URL;
+    if (!isTauri() || !invoke) return getBackendBaseUrl();
     return (await invoke('get_backend_url')) as string;
   },
 };

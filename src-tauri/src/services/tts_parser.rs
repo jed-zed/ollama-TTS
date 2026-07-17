@@ -260,9 +260,9 @@ impl StreamingTTSParser {
                     continue;
                 }
                 
+                self.process_char(char);
                 self.response_buffer.push(char);
                 display_content.push(char);
-                self.process_char(char);
             }
         }
         

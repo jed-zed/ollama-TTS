@@ -27,6 +27,25 @@ const InferenceParams = ({
   onApply,
   updateConfig,
 }: InferenceParamsProps) => {
+  const minRefAudios =
+    config &&
+    'gsv_min_ref_audios' in config &&
+    typeof config.gsv_min_ref_audios === 'number'
+      ? config.gsv_min_ref_audios
+      : 2;
+  const maxRefAudios =
+    config &&
+    'gsv_max_ref_audios' in config &&
+    typeof config.gsv_max_ref_audios === 'number'
+      ? config.gsv_max_ref_audios
+      : 3;
+  const emotionThreshold =
+    config &&
+    'gsv_emotion_threshold' in config &&
+    typeof config.gsv_emotion_threshold === 'number'
+      ? config.gsv_emotion_threshold
+      : 0.3;
+
   return (
     <Card className="glass border-none shadow-custom">
       <CardContent className="pt-6">
@@ -82,35 +101,35 @@ const InferenceParams = ({
               <div className="space-y-2">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">最少音频数</span>
-                  <span className="font-mono bg-slate-100 px-1 rounded">{(config as Record<string, unknown>)?.gsv_min_ref_audios as number ?? 2}</span>
+                  <span className="font-mono bg-slate-100 px-1 rounded">{minRefAudios}</span>
                 </div>
                 <Input
                   type="number"
                   min={1}
                   max={5}
                   className="h-8 bg-white/50 text-center text-xs"
-                  value={(config as Record<string, unknown>)?.gsv_min_ref_audios as number ?? 2}
+                  value={minRefAudios}
                   onChange={(e) => updateConfig('gsv_min_ref_audios', parseInt(e.target.value) || 2)}
                 />
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">最多音频数</span>
-                  <span className="font-mono bg-slate-100 px-1 rounded">{(config as Record<string, unknown>)?.gsv_max_ref_audios as number ?? 3}</span>
+                  <span className="font-mono bg-slate-100 px-1 rounded">{maxRefAudios}</span>
                 </div>
                 <Input
                   type="number"
                   min={1}
                   max={5}
                   className="h-8 bg-white/50 text-center text-xs"
-                  value={(config as Record<string, unknown>)?.gsv_max_ref_audios as number ?? 3}
+                  value={maxRefAudios}
                   onChange={(e) => updateConfig('gsv_max_ref_audios', parseInt(e.target.value) || 3)}
                 />
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">情感阈值</span>
-                  <span className="font-mono bg-slate-100 px-1 rounded">{(((config as Record<string, unknown>)?.gsv_emotion_threshold as number ?? 0.3) * 100).toFixed(0)}%</span>
+                  <span className="font-mono bg-slate-100 px-1 rounded">{(emotionThreshold * 100).toFixed(0)}%</span>
                 </div>
                 <Input
                   type="number"
@@ -118,7 +137,7 @@ const InferenceParams = ({
                   max={0.9}
                   step={0.1}
                   className="h-8 bg-white/50 text-center text-xs"
-                  value={(config as Record<string, unknown>)?.gsv_emotion_threshold as number ?? 0.3}
+                  value={emotionThreshold}
                   onChange={(e) => updateConfig('gsv_emotion_threshold', parseFloat(e.target.value) || 0.3)}
                 />
               </div>

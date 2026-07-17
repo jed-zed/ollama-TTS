@@ -1,0 +1,3 @@
+[submodule "tauri-plugin-mcp"]
+	path = tauri-plugin-mcp
+	url = https://github.com/delorenj/tauri-mcp-server.git

@@ -1,7 +1,7 @@
 import { isTauri } from '@/services/tauri';
 import { speechService } from '@/services/speech';
 import type { SpeechConfig, SpeechEngine } from '@/services/speech';
-import { API_BASE_URL } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 
 type VoiceShortcutState = 'idle' | 'recording' | 'recognizing';
 
@@ -36,7 +36,7 @@ class GlobalShortcutService {
 
   async loadSpeechConfig() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/config`);
+      const response = await fetch(`${getBackendBaseUrl()}/api/config`);
       if (response.ok) {
         const result = await response.json();
         const configData = result.data || result;

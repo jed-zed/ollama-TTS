@@ -32,6 +32,9 @@ pub struct UserPresetMeta {
 #[serde(default)]
 pub struct Config {
     // ==================== API 配置 ====================
+    /// 主 API 端口
+    #[serde(default = "default_main_api_port")]
+    pub main_api_port: u16,
     /// 远程 AI API 地址
     pub api_url: String,
     /// API 密钥
@@ -140,6 +143,10 @@ pub struct Config {
     /// 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
     pub paste_mode: String,
 
+    /// 局域网开放：绑定 0.0.0.0 允许局域网设备访问
+    #[serde(default)]
+    pub lan_access_enabled: bool,
+
     #[serde(default)]
     pub antigravity_bridge_enabled: bool,
     #[serde(default = "default_antigravity_window_title")]
@@ -152,8 +159,15 @@ pub struct Config {
     pub antigravity_pending_submit_fallback_enabled: bool,
     #[serde(default)]
     pub antigravity_include_thinking: bool,
+    #[serde(default)]
+    pub antigravity_stream_enabled: bool,
+    #[serde(default = "default_antigravity_bridge_model_id")]
+    pub antigravity_bridge_model_id: String,
     #[serde(default = "default_antigravity_max_concurrent")]
     pub antigravity_max_concurrent: i32,
+    /// 桥接流式输出每字符延迟 (ms)，用于匀速打字效果
+    #[serde(default = "default_antigravity_stream_char_delay")]
+    pub antigravity_stream_char_delay: i32,
 
     // ==================== 辅助模型配置 ====================
     #[serde(default)]
@@ -205,6 +219,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             // API 配置
+            main_api_port: default_main_api_port(),
             api_url: String::new(),
             api_key: String::new(),
             model_name: String::new(),
@@ -272,13 +287,18 @@ impl Default for Config {
             voice_shortcut: "Ctrl+Shift+,".to_string(),
             paste_mode: "direct".to_string(),
 
+            lan_access_enabled: false,
+
             antigravity_bridge_enabled: false,
             antigravity_window_title: default_antigravity_window_title(),
             antigravity_timeout_ms: default_antigravity_timeout_ms(),
             antigravity_max_retries: default_antigravity_max_retries(),
             antigravity_pending_submit_fallback_enabled: false,
             antigravity_include_thinking: false,
+            antigravity_stream_enabled: false,
+            antigravity_bridge_model_id: default_antigravity_bridge_model_id(),
             antigravity_max_concurrent: default_antigravity_max_concurrent(),
+            antigravity_stream_char_delay: default_antigravity_stream_char_delay(),
 
             // 辅助模型配置
             fallback_model_enabled: false,
@@ -374,6 +394,9 @@ fn default_antigravity_window_title() -> String { "Antigravity".to_string() }
 fn default_antigravity_timeout_ms() -> i32 { 180000 }
 fn default_antigravity_max_retries() -> i32 { 0 }
 fn default_antigravity_max_concurrent() -> i32 { 3 }
+fn default_antigravity_bridge_model_id() -> String { "MODEL_PLACEHOLDER_M18".to_string() }
+fn default_antigravity_stream_char_delay() -> i32 { 20 }
+fn default_main_api_port() -> u16 { 8765 }
 
 /// 默认系统提示词注入
 pub const DEFAULT_SYSTEM_PROMPT_INJECTION: &str = r#"

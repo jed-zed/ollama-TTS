@@ -1,6 +1,6 @@
 //! 主 API 路由定义
 //! 
-//! 定义 localhost:8765 上的所有 API 端点。
+//! 定义主 API 服务器上的所有端点（默认监听 localhost:8765）。
 
 use axum::{
     routing::{get, post},

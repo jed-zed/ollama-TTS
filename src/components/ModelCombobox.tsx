@@ -275,7 +275,9 @@ export function ModelCombobox({
           <div className="flex items-center gap-1 ml-2 shrink-0">
             {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             {error && !isLoading && models.length === 0 && (
-              <AlertCircle className="h-4 w-4 text-amber-500" title={error} />
+              <AlertCircle className="h-4 w-4 text-amber-500">
+                <title>{error}</title>
+              </AlertCircle>
             )}
             <ChevronsUpDown className="h-4 w-4 opacity-50" />
           </div>

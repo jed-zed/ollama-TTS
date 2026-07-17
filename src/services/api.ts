@@ -5,14 +5,13 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { ApiResponse } from './types';
-import { API_BASE_URL, HEALTH_CHECK_TIMEOUT_MS } from '@/lib/constants';
-
-const DEFAULT_BASE_URL = API_BASE_URL;
+import { HEALTH_CHECK_TIMEOUT_MS } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 
 class ApiClient {
-  private baseUrl: string;
+  private baseUrl: string | null;
 
-  constructor(baseUrl: string = DEFAULT_BASE_URL) {
+  constructor(baseUrl: string | null = null) {
     this.baseUrl = baseUrl;
   }
 
@@ -27,7 +26,7 @@ class ApiClient {
    * 获取基础 URL
    */
   getBaseUrl(): string {
-    return this.baseUrl;
+    return this.baseUrl ?? getBackendBaseUrl();
   }
 
   /**
@@ -63,7 +62,7 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${this.getBaseUrl()}${endpoint}`;
 
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
@@ -170,7 +169,7 @@ class ApiClient {
     onError?: (error: string) => void,
     onComplete?: () => void
   ): Promise<void> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${this.getBaseUrl()}${endpoint}`;
 
     try {
       const response = await fetch(url, {

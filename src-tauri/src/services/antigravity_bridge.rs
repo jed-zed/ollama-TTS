@@ -7,6 +7,13 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, Semaphore};
 use tracing::{debug, info, warn};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Windows CREATE_NO_WINDOW flag — 防止 powershell 弹出终端窗口
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 use uuid::Uuid;
 
 const MIN_TIMEOUT_MS: i32 = 1_000;
@@ -14,6 +21,7 @@ const MAX_TIMEOUT_MS: i32 = 300_000;
 const MAX_PROMPT_LENGTH: usize = 2_000_000;
 const MAX_CONTENT_LENGTH: usize = 1_000_000;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
+const STREAM_POLL_INTERVAL_MS: u64 = 300;
 const DEFAULT_STABLE_ROUNDS: u8 = 2;
 const DEFAULT_REQUEST_SOURCE: i32 = 0;
 const DEFAULT_TASK_TTL_MS: u64 = 180_000;
@@ -57,6 +65,7 @@ pub struct BridgeResponse {
 struct LsConnection {
     port: u16,
     csrf_token: String,
+    csrf_header: String,
     prefer_https: bool,
 }
 
@@ -78,13 +87,18 @@ fn extract_arg_value(cmdline: &str, arg_names: &[&str]) -> Option<String> {
 
 impl AntigravityBridge {
     pub fn new() -> Self {
+        Self::with_concurrency(DEFAULT_MAX_CONCURRENT)
+    }
+
+    pub fn with_concurrency(max_concurrent: usize) -> Self {
+        let max = if max_concurrent == 0 { DEFAULT_MAX_CONCURRENT } else { max_concurrent };
         Self {
             inner: Arc::new(Mutex::new(BridgeInner {
                 queue: VecDeque::new(),
                 waiters: HashMap::new(),
             })),
             ls_cache: Arc::new(Mutex::new(None)),
-            concurrency: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
+            concurrency: Arc::new(Semaphore::new(max)),
         }
     }
 
@@ -99,6 +113,7 @@ impl AntigravityBridge {
                     return Ok(LsConnection {
                         port: cached.connection.port,
                         csrf_token: cached.connection.csrf_token.clone(),
+                        csrf_header: cached.connection.csrf_header.clone(),
                         prefer_https: cached.connection.prefer_https,
                     });
                 }
@@ -117,6 +132,7 @@ impl AntigravityBridge {
                 connection: LsConnection {
                     port: connection.port,
                     csrf_token: connection.csrf_token.clone(),
+                    csrf_header: connection.csrf_header.clone(),
                     prefer_https: connection.prefer_https,
                 },
                 discovered_at: Instant::now(),
@@ -238,6 +254,7 @@ impl AntigravityBridge {
         prompt: String,
         timeout_ms: i32,
         include_thinking: bool,
+        model_id: &str,
     ) -> Result<String, String> {
         if prompt.trim().is_empty() {
             return Err("bridge input is empty".to_string());
@@ -256,6 +273,10 @@ impl AntigravityBridge {
 
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
+            .http1_only()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
             .timeout(Duration::from_millis(timeout))
             .build()
             .map_err(|err| format!("connect: build ls client failed: {}", err))?;
@@ -271,7 +292,8 @@ impl AntigravityBridge {
         };
 
         // 每个请求创建独立的 cascade（请求隔离的关键）
-        let cascade_id = match start_cascade(&client, &connection).await {
+        let cascade_title: String = format!("O2O: {}", prompt.chars().take(30).collect::<String>());
+        let cascade_id = match start_cascade(&client, &connection, Some(&cascade_title)).await {
             Ok(id) => id,
             Err(e) => {
                 // cascade 创建失败可能是连接已失效，清除缓存
@@ -282,13 +304,25 @@ impl AntigravityBridge {
         };
         info!("[{}] 创建独立 cascade 会话成功", cascade_id);
 
+        // 首次请求时查询 GetUserStatus 输出可用模型信息（仅一次）
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static LOGGED_MODELS: AtomicBool = AtomicBool::new(false);
+            if !LOGGED_MODELS.swap(true, Ordering::Relaxed) {
+                if let Ok(status) = call_ls_method(&client, &connection, "GetUserStatus", serde_json::json!({})).await {
+                    let s = status.to_string();
+                    info!("========= 可用模型信息 (GetUserStatus) =========\n{}", &s.chars().take(3000).collect::<String>());
+                }
+            }
+        }
+
         info!(
             "[{}] 发送消息: prompt_len={}, preview={}",
             cascade_id,
             prompt.len(),
             prompt.chars().take(200).collect::<String>()
         );
-        send_user_message(&client, &connection, &cascade_id, &prompt).await?;
+        send_user_message(&client, &connection, &cascade_id, &prompt, model_id).await?;
         info!("[{}] 消息发送成功", cascade_id);
 
         // 轮询此 cascade 的 trajectory（每个 cascade_id 独立，不会混淆）
@@ -298,6 +332,126 @@ impl AntigravityBridge {
 
         // _permit 在此作用域结束时自动释放，允许下一个排队请求进入
         result
+    }
+
+    /// 流式版本：返回一个 Receiver，轮询过程中每次检测到新增内容就发送 delta
+    pub async fn execute_builtin_ls_stream(
+        &self,
+        prompt: String,
+        timeout_ms: i32,
+        include_thinking: bool,
+        model_id: &str,
+    ) -> Result<tokio::sync::mpsc::Receiver<String>, String> {
+        if prompt.trim().is_empty() {
+            return Err("bridge input is empty".to_string());
+        }
+        if prompt.len() > MAX_PROMPT_LENGTH {
+            return Err("bridge input is too long".to_string());
+        }
+
+        let _permit = Arc::clone(&self.concurrency).acquire_owned().await
+            .map_err(|_| "bridge concurrency semaphore closed".to_string())?;
+        info!("内置 LS 流式桥接获取并发许可");
+
+        let timeout = timeout_ms.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS) as u64;
+
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(Duration::from_millis(timeout))
+            .build()
+            .map_err(|err| format!("connect: build ls client failed: {}", err))?;
+
+        let connection = match self.get_or_discover_connection().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                warn!("LS 连接发现失败: {}, 清除缓存重试", e);
+                self.invalidate_ls_cache().await;
+                return Err(e);
+            }
+        };
+
+        let cascade_title: String = format!("O2O: {}", prompt.chars().take(30).collect::<String>());
+        let cascade_id = match start_cascade(&client, &connection, Some(&cascade_title)).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!("cascade 创建失败，清除 LS 缓存: {}", e);
+                self.invalidate_ls_cache().await;
+                return Err(e);
+            }
+        };
+        info!("[{}] 流式 cascade 创建成功", cascade_id);
+
+        send_user_message(&client, &connection, &cascade_id, &prompt, model_id).await?;
+        info!("[{}] 流式消息发送成功", cascade_id);
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+        let prompt_clone = prompt.clone();
+
+        // 在后台 spawn 轮询任务，通过 tx 增量发送内容
+        tokio::spawn(async move {
+            // 持有 _permit 直到 spawn 的任务结束
+            let _permit_guard = _permit;
+
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
+            let mut last_len: usize = 0;
+            let mut poll_count = 0u32;
+
+            // 先探测读取方法
+            let discover_result = discover_read_method(&client, &connection, &cascade_id).await;
+            let read_info = match discover_result {
+                Some(info) => info,
+                None => {
+                    let _ = tx.send("[ERROR] 无法找到 LS 读取方法".to_string()).await;
+                    return;
+                }
+            };
+            let (read_method, read_param) = read_info;
+
+            while tokio::time::Instant::now() < deadline {
+                poll_count += 1;
+                let payload = json!({ read_param: &cascade_id });
+
+                let response = match call_ls_method(&client, &connection, read_method, payload).await {
+                    Ok(r) => r,
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(STREAM_POLL_INTERVAL_MS)).await;
+                        continue;
+                    }
+                };
+
+                let cascade_status = response.get("status").and_then(Value::as_str).unwrap_or("");
+                let is_finished = cascade_status.contains("IDLE")
+                    || cascade_status.contains("DONE")
+                    || cascade_status.contains("COMPLETED")
+                    || cascade_status.contains("FINISHED");
+
+                // 提取当前累计内容
+                let full_text = extract_assistant_text(&response, &prompt_clone, include_thinking, true);
+                if full_text.len() > last_len {
+                    // 发送增量 delta
+                    let delta = full_text[last_len..].to_string();
+                    last_len = full_text.len();
+                    if tx.send(delta).await.is_err() {
+                        info!("[{}] 流式接收端已关闭，停止轮询", cascade_id);
+                        return;
+                    }
+                }
+
+                if is_finished && !full_text.is_empty() {
+                    info!(
+                        "[{}] 流式 cascade 完成: polls={}, total_len={}",
+                        cascade_id, poll_count, full_text.len()
+                    );
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_millis(STREAM_POLL_INTERVAL_MS)).await;
+            }
+
+            warn!("[{}] 流式桥接轮询超时", cascade_id);
+        });
+
+        Ok(rx)
     }
 
     async fn cleanup_request(&self, id: &str) {
@@ -332,165 +486,127 @@ impl AntigravityBridge {
 }
 
 async fn discover_ls_connection() -> Result<LsConnection, String> {
-    let script = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'language_server' -and $_.CommandLine -match '--csrf_token' } | ForEach-Object { $_.ProcessId.ToString() + '|' + $_.CommandLine }";
+    // 一步到位：找进程 → 取端口 → curl 探测，和手动发现方式完全一致
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$procs = Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -match 'language_server' -and $_.CommandLine -match '--csrf_token'
+}
+foreach ($proc in $procs) {
+    $token = ''
+    if ($proc.CommandLine -match '--csrf_token\s+(\S+)') { $token = $Matches[1] }
+    if (-not $token) { continue }
+    $ports = @(Get-NetTCPConnection -OwningProcess $proc.ProcessId -State Listen -EA SilentlyContinue | Select-Object -ExpandProperty LocalPort)
+    if ($ports.Count -eq 0) {
+        # 备选：netstat
+        netstat -aon | Select-String ('LISTENING\s+' + $proc.ProcessId + '\s*$') | ForEach-Object {
+            if ($_ -match ':(\d+)\s') { $ports += [int]$Matches[1] }
+        }
+    }
+    foreach ($p in $ports) {
+        foreach ($proto in @('http','https')) {
+            $url = "${proto}://127.0.0.1:${p}/exa.language_server_pb.LanguageServerService/GetUserStatus"
+            $code = ''
+            try {
+                $code = & curl.exe -s -o NUL -w '%{http_code}' --connect-timeout 1 -X POST $url -H 'Content-Type: application/json' -H 'connect-protocol-version: 1' -H "x-codeium-csrf-token: $token" -d '{}' 2>$null
+            } catch {}
+            if ($code -eq '200') {
+                Write-Output "${p}|${token}|x-codeium-csrf-token|${proto}"
+                exit 0
+            }
+        }
+    }
+}
+Write-Output 'NOTFOUND'
+"#;
 
-    let output = Command::new("powershell")
-        .arg("-NoProfile")
+    let mut cmd = Command::new("powershell");
+    cmd.arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command")
-        .arg(script)
-        .output()
+        .arg(script);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output()
         .await
-        .map_err(|err| format!("discover: failed to inspect process list: {}", err))?;
+        .map_err(|err| format!("discover: failed to run discovery script: {}", err))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "discover: process query failed with status {:?}",
-            output.status.code()
-        ));
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    info!("LS 发现脚本输出: {}", stdout);
+
+    if stdout.is_empty() || stdout == "NOTFOUND" {
+        return Err("discover: no reachable LS found via curl probe".to_string());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut process_entries: Vec<(u32, String)> = Vec::new();
-    for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let mut parts = line.splitn(2, '|');
-        let pid_text = parts.next().unwrap_or_default().trim();
-        let cmd = parts.next().unwrap_or_default().trim();
-        if let Ok(pid) = pid_text.parse::<u32>() {
-            if !cmd.is_empty() {
-                process_entries.push((pid, cmd.to_string()));
-            }
-        }
+    let parts: Vec<&str> = stdout.lines().last().unwrap_or("").split('|').collect();
+    if parts.len() < 4 {
+        return Err(format!("discover: unexpected script output: {}", stdout));
     }
 
-    if process_entries.is_empty() {
-        warn!("内置 LS 桥接未发现包含 csrf_token 的进程参数");
-        return Err("discover: no LS process with csrf token found".to_string());
-    }
+    let port = parts[0].parse::<u16>()
+        .map_err(|_| format!("discover: invalid port: {}", parts[0]))?;
+    let csrf_token = parts[1].to_string();
+    let csrf_header = parts[2].to_string();
+    let prefer_https = parts[3] == "https";
 
-    // 像 SDK 一样构建临时 client 用于探测
-    let probe_client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|e| format!("discover: build probe client failed: {}", e))?;
+    info!("LS 发现成功: port={}, token={}..., header={}, proto={}",
+          port, &csrf_token[..csrf_token.len().min(8)], csrf_header, parts[3]);
 
-    for (pid, cmdline) in process_entries {
-        debug!("内置 LS 桥接发现候选进程: pid={}", pid);
-
-        let csrf_token = extract_arg_value(&cmdline, &["csrf_token"]);
-        let ext_port = extract_arg_value(&cmdline, &["extension_server_port"])
-            .and_then(|v| v.parse::<u16>().ok());
-
-        if csrf_token.is_none() {
-            continue;
-        }
-
-        let csrf = csrf_token.unwrap_or_default();
-        let ports = discover_all_listening_ports(pid, ext_port).await;
-
-        // 像 SDK 的 _probePort 一样，对每个端口用 GetUserStatus 做 HTTPS/HTTP 探测
-        for port in &ports {
-            for proto in &["https", "http"] {
-                let url = format!(
-                    "{}://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/GetUserStatus",
-                    proto, port
-                );
-                let mut req = probe_client
-                    .post(&url)
-                    .header("Content-Type", "application/json");
-                if !csrf.is_empty() {
-                    req = req.header("x-codeium-csrf-token", &csrf);
-                }
-                match req.body("{}").send().await {
-                    Ok(resp) => {
-                        let status = resp.status().as_u16();
-                        // 200 或 401（缺 CSRF）都说明这是 ConnectRPC 端口
-                        if status == 200 || status == 401 {
-                            info!("端口探测成功: port={}, proto={}, status={}", port, proto, status);
-                            return Ok(LsConnection {
-                                port: *port,
-                                csrf_token: csrf,
-                                prefer_https: *proto == "https",
-                            });
-                        }
-                        debug!("端口探测 {}:{} → status={}", proto, port, status);
-                    }
-                    Err(e) => {
-                        debug!("端口探测 {}:{} → 连接失败: {}", proto, port, e);
-                    }
-                }
-            }
-        }
-
-        // 如果所有探测都失败，退回到最小端口（兼容旧行为）
-        if let Some(&port) = ports.first() {
-            info!("端口探测均未通过 GetUserStatus，降级到最小端口: {}", port);
-            return Ok(LsConnection {
-                port,
-                csrf_token: csrf,
-                prefer_https: true,
-            });
-        }
-
-        if let Some(port) = ext_port {
-            return Ok(LsConnection {
-                port,
-                csrf_token: csrf,
-                prefer_https: false,
-            });
-        }
-    }
-
-    warn!("内置 LS 桥接发现进程但缺少可用端口/csrf 参数");
-    Err("discover: ls process found but missing usable port/csrf arguments".to_string())
+    Ok(LsConnection {
+        port,
+        csrf_token,
+        csrf_header,
+        prefer_https,
+    })
 }
 
 async fn discover_all_listening_ports(pid: u32, ext_port: Option<u16>) -> Vec<u16> {
+    // 策略1: Get-NetTCPConnection（精准按 PID，Windows 8+）
+    // 策略2: netstat + 严格正则匹配 PID（兼容所有 Windows）
     let script = format!(
-        "netstat -aon | findstr LISTENING | findstr {}",
-        pid
+        r#"try {{
+  $p = Get-NetTCPConnection -OwningProcess {pid} -State Listen -EA Stop
+  $p | ForEach-Object {{ $_.LocalPort }}
+}} catch {{
+  netstat -aon | Select-String 'LISTENING\s+{pid}\s*$' | ForEach-Object {{
+    if ($_ -match ':(\d+)\s') {{ $Matches[1] }}
+  }}
+}}"#,
+        pid = pid
     );
 
-    let output = match Command::new("powershell")
-        .arg("-NoProfile")
+    let mut cmd = Command::new("powershell");
+    cmd.arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command")
-        .arg(script)
-        .output()
-        .await
-    {
+        .arg(script);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = match cmd.output().await {
         Ok(o) => o,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            warn!("端口发现命令执行失败: {}", e);
+            return Vec::new();
+        }
     };
-
-    if !output.status.success() {
-        return Vec::new();
-    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let port_re = match Regex::new(r#"127\.0\.0\.1:(\d{2,5})"#) {
-        Ok(re) => re,
-        Err(_) => return Vec::new(),
-    };
-
     let mut ports = Vec::new();
-    for cap in port_re.captures_iter(&stdout) {
-        if let Some(m) = cap.get(1) {
-            if let Ok(port) = m.as_str().parse::<u16>() {
-                if Some(port) != ext_port && !ports.contains(&port) {
-                    ports.push(port);
-                }
+    for line in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Ok(port) = line.parse::<u16>() {
+            if Some(port) != ext_port && !ports.contains(&port) {
+                ports.push(port);
             }
         }
     }
 
     ports.sort_unstable();
-    info!("LS 候选端口(排除 ext_port {:?}): {:?}", ext_port, ports);
+    info!("LS 候选端口(排除 ext_port {:?}): {:?} (pid={})", ext_port, ports, pid);
     ports
 }
 
-async fn start_cascade(client: &reqwest::Client, connection: &LsConnection) -> Result<String, String> {
+async fn start_cascade(client: &reqwest::Client, connection: &LsConnection, _title: Option<&str>) -> Result<String, String> {
     let response = call_ls_method(
         client,
         connection,
@@ -512,41 +628,79 @@ async fn send_user_message(
     connection: &LsConnection,
     cascade_id: &str,
     prompt: &str,
+    model_id: &str,
 ) -> Result<(), String> {
-    // LS 强制要求指定 requestedModel
-    let cascade_config = json!({
+    // LS 强制要求指定 requestedModel — 尝试多种 proto3 JSON 格式
+    // 格式1: 直接 "model": "MODEL_xxx"（proto3 枚举字符串）
+    let config_v1 = json!({
         "plannerConfig": {
             "plannerTypeConfig": {
                 "conversational": {}
             },
             "requestedModel": {
-                "model": 1018
+                "model": model_id
+            }
+        }
+    });
+    // 格式2: ConnectRPC oneof 格式 choice.case/value
+    let config_v2 = json!({
+        "plannerConfig": {
+            "plannerTypeConfig": {
+                "conversational": {}
+            },
+            "requestedModel": {
+                "choice": {
+                    "case": "model",
+                    "value": model_id
+                }
+            }
+        }
+    });
+    // 格式3: modelOrAlias 嵌套
+    let config_v3 = json!({
+        "plannerConfig": {
+            "plannerTypeConfig": {
+                "conversational": {}
+            },
+            "requestedModel": {
+                "modelOrAlias": {
+                    "model": model_id
+                }
             }
         }
     });
 
     let payloads: Vec<(&str, Value)> = vec![
-        // proto3 canonical JSON: items: [{"text": "..."}]
+        // config_v1: "model": "MODEL_xxx" + items text
         (
-            "proto3_text_items",
+            "v1_model_enum",
             json!({
                 "cascadeId": cascade_id,
                 "items": [{ "text": prompt }],
-                "cascadeConfig": cascade_config
+                "cascadeConfig": config_v1
             }),
         ),
-        // 简化格式：userMessage 字段
+        // config_v2: ConnectRPC choice + items text
         (
-            "proto3_user_message",
+            "v2_choice",
             json!({
                 "cascadeId": cascade_id,
-                "userMessage": prompt,
-                "cascadeConfig": cascade_config
+                "items": [{ "text": prompt }],
+                "cascadeConfig": config_v2
             }),
         ),
-        // ConnectRPC case/value 格式
+        // config_v3: modelOrAlias + items text
         (
-            "connectrpc_case_value",
+            "v3_modelOrAlias",
+            json!({
+                "cascadeId": cascade_id,
+                "items": [{ "text": prompt }],
+                "cascadeConfig": config_v3
+            }),
+        ),
+        // config_v1 + ConnectRPC items 格式
+        (
+            "v1_connectrpc_items",
             json!({
                 "cascadeId": cascade_id,
                 "items": [{
@@ -555,7 +709,7 @@ async fn send_user_message(
                         "value": prompt
                     }
                 }],
-                "cascadeConfig": cascade_config
+                "cascadeConfig": config_v1
             }),
         ),
     ];
@@ -580,6 +734,12 @@ async fn send_user_message(
                 last_err = err;
             }
         }
+    }
+
+    // 所有 payload variant 全部失败 — 查询 GetUserStatus 输出可用模型信息
+    if let Ok(status) = call_ls_method(client, connection, "GetUserStatus", serde_json::json!({})).await {
+        let status_str = status.to_string();
+        info!("GetUserStatus (调试可用模型): {}", &status_str.chars().take(2000).collect::<String>());
     }
 
     Err(format!(
@@ -627,26 +787,7 @@ async fn discover_read_method(
 ) -> Option<(&'static str, &'static str)> {
     info!("===== LS 方法诊断开始 =====");
 
-    // 第一步：用已知可用的方法验证 HTTPS 连接
-    let diagnostic_methods: Vec<(&str, Value)> = vec![
-        ("GetUserStatus", json!({})),
-        ("GetAllCascadeTrajectories", json!({})),
-        ("GetUserTrajectoryDescriptions", json!({})),
-    ];
-
-    for (method, payload) in &diagnostic_methods {
-        match probe_https_method(client, connection, method, payload.clone()).await {
-            Ok((status, body)) => {
-                let preview: String = body.chars().take(300).collect();
-                info!("诊断 {} → HTTPS status={}, body_len={}, preview={}", method, status, body.len(), preview);
-            }
-            Err(err) => {
-                info!("诊断 {} → HTTPS 请求失败: {}", method, err);
-            }
-        }
-    }
-
-    // 第二步：用 HTTPS 直接探测读取方法（不做 HTTP 降级，直接看 HTTPS 状态码）
+    // 用 call_ls_method (curl) 探测读取方法
     let read_candidates: Vec<(&'static str, &'static str)> = vec![
         ("GetConversation", "cascadeId"),
         ("GetConversation", "conversationId"),
@@ -661,17 +802,15 @@ async fn discover_read_method(
 
     for (method, param) in &read_candidates {
         let payload = json!({ *param: cascade_id });
-        match probe_https_method(client, connection, method, payload).await {
-            Ok((status, body)) => {
-                let preview: String = body.chars().take(300).collect();
-                if status == 200 {
-                    info!("探测成功: {}/{} → 200, body_len={}, preview={}", method, param, body.len(), preview);
-                    return Some((method, param));
-                }
-                info!("探测 {}/{} → HTTPS status={}, body={}", method, param, status, preview);
+        match call_ls_method(client, connection, method, payload).await {
+            Ok(body) => {
+                let preview = body.to_string();
+                let preview: String = preview.chars().take(300).collect();
+                info!("探测成功: {}/{} → body_len={}, preview={}", method, param, preview.len(), preview);
+                return Some((method, param));
             }
             Err(err) => {
-                info!("探测 {}/{} → 请求失败: {}", method, param, err);
+                info!("探测 {}/{} → 失败: {}", method, param, err);
             }
         }
     }
@@ -771,15 +910,21 @@ async fn wait_for_stable_response(
             || cascade_status.contains("FINISHED");
 
         if !is_finished {
+            // Cascade 仍在运行，但也尝试提取已部分生成的内容
+            let candidate = extract_assistant_text(&response, prompt, include_thinking, true);
+            if !candidate.is_empty() && candidate.len() >= last_content.len() {
+                last_content = candidate;
+                stable_rounds = 0; // 还在运行中，不算稳定
+            }
             if poll_count <= 5 {
-                info!("轮询[{}] cascade 仍在运行 ({}), 继续等待...", poll_count, cascade_status);
+                info!("轮询[{}] cascade 仍在运行 ({}), 当前最长内容 len={}", poll_count, cascade_status, last_content.len());
             }
             tokio::time::sleep(Duration::from_millis(DEFAULT_POLL_INTERVAL_MS)).await;
             continue;
         }
 
         // Cascade 已完成，提取回复
-        let candidate = extract_assistant_text(&response, prompt, include_thinking);
+        let candidate = extract_assistant_text(&response, prompt, include_thinking, false);
         if poll_count <= 5 {
             info!(
                 "轮询[{}] cascade 已完成, extract 结果: len={}, preview={}",
@@ -790,11 +935,22 @@ async fn wait_for_stable_response(
         }
 
         if !candidate.is_empty() {
-            if candidate == last_content {
-                stable_rounds += 1;
+            // 关键：只有新内容 >= 已有最长内容时才更新
+            // 防止 LS 临时用 bot-ID 等短字符串替换已生成的真实内容
+            if candidate.len() >= last_content.len() {
+                if candidate == last_content {
+                    stable_rounds += 1;
+                } else {
+                    stable_rounds = 1;
+                    last_content = candidate;
+                }
             } else {
-                stable_rounds = 1;
-                last_content = candidate;
+                // 新内容比已有内容短 —— 忽略，保留已有的长内容
+                info!(
+                    "轮询[{}] 新内容更短 ({}< {})，保留旧内容",
+                    poll_count, candidate.len(), last_content.len()
+                );
+                stable_rounds += 1; // 但也算一轮稳定
             }
 
             if stable_rounds >= DEFAULT_STABLE_ROUNDS {
@@ -837,33 +993,24 @@ async fn wait_for_trajectory_summary(
 
     while tokio::time::Instant::now() < deadline {
         poll_count += 1;
-        match probe_https_method(client, connection, "GetAllCascadeTrajectories", json!({})).await {
-            Ok((200, body)) => {
-                // 在 trajectories JSON 中找到我们 cascade_id 对应的 summary
-                if let Ok(parsed) = serde_json::from_str::<Value>(&body) {
-                    if let Some(summary) = find_cascade_summary(&parsed, cascade_id) {
-                        if poll_count <= 3 {
-                            info!("trajectory 轮询[{}] summary={}", poll_count, summary);
+        match call_ls_method(client, connection, "GetAllCascadeTrajectories", json!({})).await {
+            Ok(parsed) => {
+                if let Some(summary) = find_cascade_summary(&parsed, cascade_id) {
+                    if poll_count <= 3 {
+                        info!("trajectory 轮询[{}] summary={}", poll_count, summary);
+                    }
+                    if !summary.is_empty() {
+                        if summary == last_summary {
+                            stable_rounds += 1;
+                        } else {
+                            stable_rounds = 1;
+                            last_summary = summary;
                         }
-                        if !summary.is_empty() {
-                            if summary == last_summary {
-                                stable_rounds += 1;
-                            } else {
-                                stable_rounds = 1;
-                                last_summary = summary;
-                            }
-                            if stable_rounds >= DEFAULT_STABLE_ROUNDS {
-                                info!("trajectory summary 稳定: cascade_id={}, summary={}", cascade_id, last_summary);
-                                return Ok(last_summary);
-                            }
+                        if stable_rounds >= DEFAULT_STABLE_ROUNDS {
+                            info!("trajectory summary 稳定: cascade_id={}, summary={}", cascade_id, last_summary);
+                            return Ok(last_summary);
                         }
                     }
-                }
-            }
-            Ok((status, body)) => {
-                if poll_count <= 3 {
-                    let preview: String = body.chars().take(200).collect();
-                    info!("trajectory 轮询[{}] status={}, body={}", poll_count, status, preview);
                 }
             }
             Err(err) => {
@@ -915,7 +1062,7 @@ fn find_cascade_summary(root: &Value, cascade_id: &str) -> Option<String> {
 }
 
 async fn call_ls_method(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     connection: &LsConnection,
     method: &str,
     payload: Value,
@@ -933,66 +1080,87 @@ async fn call_ls_method(
     let payload_text = payload.to_string();
     let mut last_error = String::new();
 
-    for (idx, proto) in proto_order.iter().enumerate() {
+    for (_idx, proto) in proto_order.iter().enumerate() {
         let url = format!(
             "{}://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/{}",
             proto, connection.port, method
         );
 
-        let response = client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .header("x-codeium-csrf-token", connection.csrf_token.as_str())
-            .body(payload_text.clone())
-            .send()
-            .await;
+        let csrf_header_val = format!("{}: {}", connection.csrf_header, connection.csrf_token);
 
-        let response = match response {
-            Ok(resp) => resp,
+        let mut cmd = Command::new("curl.exe");
+        // 写入临时文件避免 Windows 命令行长度限制 (32KB)
+        let tmp_path = std::env::temp_dir().join(format!("ls_payload_{}.json", std::process::id()));
+        if let Err(e) = tokio::fs::write(&tmp_path, &payload_text).await {
+            last_error = format!("connect: write payload temp file failed: {}", e);
+            continue;
+        }
+        let at_file = format!("@{}", tmp_path.display());
+
+        cmd.arg("-s")
+            .arg("--connect-timeout").arg("5")
+            .arg("-m").arg("120")
+            .arg("-X").arg("POST")
+            .arg(&url)
+            .arg("-H").arg("Content-Type: application/json")
+            .arg("-H").arg("connect-protocol-version: 1")
+            .arg("-H").arg(&csrf_header_val)
+            .arg("-d").arg(&at_file)
+            .arg("-w").arg("\n%{http_code}");
+        if *proto == "https" {
+            cmd.arg("-k");
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        let output = match cmd.output().await {
+            Ok(o) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                o
+            }
             Err(err) => {
-                let err_text = err.to_string();
-                last_error = format!("connect: request {} via {} failed: {}", method, proto, err_text);
-                // 任意方法发生协议错误（SSL/TLS混用）时，允许切换协议重试
-                let allow_fallback = idx == 0 && is_protocol_mismatch_message(&err_text);
-                if allow_fallback {
-                    debug!("协议不匹配，切换协议重试: method={}, proto={}", method, proto);
-                    continue;
-                }
-                return Err(last_error.clone());
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                last_error = format!("connect: curl {} via {} failed: {}", method, proto, err);
+                continue;
             }
         };
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| format!("parse: read {} body failed: {}", method, err))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
-        if !status.is_success() {
+        // curl -w "\n%{http_code}" 在最后一行输出 HTTP 状态码
+        let (body, status_str) = match stdout.rsplit_once('\n') {
+            Some((b, s)) => (b.to_string(), s.trim().to_string()),
+            None => (stdout.clone(), String::new()),
+        };
+
+        let status_code: u16 = status_str.parse().unwrap_or(0);
+
+        if status_code == 0 {
+            last_error = format!("connect: curl {} via {} returned no status (connection failed)", method, proto);
+            continue;
+        }
+
+        if status_code < 200 || status_code >= 300 {
             let body_hint = truncate_for_error(&body);
-            // 协议错误 OR 404（路由不存在，可能是协议选错了）时，允许切换协议重试
-            let is_not_found = status.as_u16() == 404;
-            let allow_fallback = idx == 0
-                && (is_protocol_mismatch_message(&body_hint) || is_not_found);
-
             last_error = format!(
-                "connect: {} via {} returned {}: {}",
-                method,
-                proto,
-                status,
+                "connect: {} via {} returned {} {}: {}",
+                method, proto, status_code,
+                if status_code == 502 { "Bad Gateway" }
+                else if status_code == 401 { "Unauthorized" }
+                else if status_code == 404 { "Not Found" }
+                else { "" },
                 body_hint
             );
 
-            if allow_fallback {
-                debug!("收到 {} {}，切换协议重试: method={}", status.as_u16(), if is_not_found { "Not Found" } else { "协议错误" }, method);
+            // 404 允许切换协议重试
+            if status_code == 404 && _idx == 0 {
                 continue;
             }
-
-            return Err(last_error.clone());
+            return Err(last_error);
         }
 
         return serde_json::from_str::<Value>(&body)
-            .map_err(|err| format!("parse: decode {} response failed: {}", method, err));
+            .map_err(|err| format!("parse: decode {} response failed: {} body={}", method, err, &body[..body.len().min(200)]));
     }
 
     if last_error.is_empty() {
@@ -1002,10 +1170,15 @@ async fn call_ls_method(
     }
 }
 
-fn extract_assistant_text(root: &Value, prompt: &str, include_thinking: bool) -> String {
+fn extract_assistant_text(root: &Value, prompt: &str, include_thinking: bool, skip_degraded: bool) -> String {
     // 优先使用 trajectory steps 精准解析
     if let Some(text) = extract_from_trajectory_steps(root, prompt, include_thinking) {
         return text;
+    }
+
+    // 如果调用者要求跳过降级路径（如 cascade 仍在 RUNNING），直接返回空
+    if skip_degraded {
+        return String::new();
     }
 
     // 降级：通用最长文本搜索
@@ -1013,17 +1186,52 @@ fn extract_assistant_text(root: &Value, prompt: &str, include_thinking: bool) ->
     collect_all_strings(root, &mut candidates);
 
     let prompt_trimmed = prompt.trim();
-    info!("extract_assistant_text(降级): 收集到 {} 个候选文本", candidates.len());
+    let total = candidates.len();
 
-    candidates
+    // 第一层：基本清洗（去掉明确的噪声）
+    let cleaned: Vec<String> = candidates
         .into_iter()
         .map(|text| text.trim().to_string())
-        .filter(|text| text.len() > 2)
+        .filter(|text| text.len() > 10)
         .filter(|text| text != prompt_trimmed)
+        .filter(|text| !text.starts_with("CORTEX_"))
+        .filter(|text| !text.starts_with("CASCADE_STATUS") && !text.starts_with("CASCADE_STEP") && !text.starts_with("CASCADE_STATE"))
+        .filter(|text| !text.starts_with("file:///"))
+        .filter(|text| !text.starts_with("bot-"))
+        .filter(|text| !text.starts_with("STOP_REASON_"))
+        .filter(|text| !text.starts_with("MODEL_PLACEHOLDER"))
+        .filter(|text| !looks_like_uuid(text))
+        .filter(|text| !looks_like_timestamp(text))
+        .filter(|text| !looks_like_duration_str(text))
         .filter(|text| !looks_like_base64(text))
+        .collect();
+
+    info!(
+        "extract_assistant_text(降级): 总候选={}, 基本清洗后={}",
+        total, cleaned.len()
+    );
+
+    // 第二层：尝试排除系统上下文噪声
+    let strict_filtered: Vec<&String> = cleaned.iter()
+        .filter(|text| !is_system_context_content(text))
+        .filter(|text| !is_title_generation_content(text))
         .filter(|text| !looks_like_thinking_content(text))
-        .max_by_key(|text| text.len())
-        .unwrap_or_default()
+        .collect();
+
+    // 如果严格过滤后还有候选，选最长的
+    if !strict_filtered.is_empty() {
+        let selected = strict_filtered.into_iter().max_by_key(|t| t.len()).unwrap();
+        info!(
+            "extract_assistant_text(降级): 严格过滤选中, len={}, preview={}",
+            selected.len(),
+            selected.chars().take(100).collect::<String>()
+        );
+        selected.clone()
+    } else {
+        // 严格过滤移除了所有候选（通常是系统元数据），返回空让轮询继续等待
+        info!("extract_assistant_text(降级): 严格过滤为空，返回空（等待真正的 AI 回复）");
+        String::new()
+    }
 }
 
 /// 从 GetCascadeTrajectory 响应中精准提取 AI 助手的回复
@@ -1043,7 +1251,7 @@ fn extract_from_trajectory_steps(root: &Value, prompt: &str, include_thinking: b
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or("");
-    info!("trajectory 解析: steps={}, cascade_status={}", steps.len(), status);
+    debug!("trajectory 解析: steps={}, cascade_status={}", steps.len(), status);
 
     let prompt_trimmed = prompt.trim();
 
@@ -1064,18 +1272,46 @@ fn extract_from_trajectory_steps(root: &Value, prompt: &str, include_thinking: b
         }
 
         // 跳过标题/摘要生成步骤
-        if step_type.contains("NOTIFY_USER")
-            || step_type.contains("TITLE")
-            || step_type.contains("SUMMARY")
-            || step_type.contains("OBJECTIVE")
+        // 只跳过纯粹的标题/摘要/目标生成步骤
+        // NOTIFY_USER 不能跳过！CORTEX_STEP_TYPE_NOTIFY_USER 包含 AI 的正式回复
+        if step_type.contains("TITLE_GENERATION")
+            || step_type.contains("SUMMARY_GENERATION")
+            || step_type.contains("OBJECTIVE_GENERATION")
+            || step_type.contains("GENERATE_TITLE")
+            || step_type.contains("GENERATE_SUMMARY")
         {
-            info!("step[{}] type={} → 跳过（标题/通知类型）", i, step_type);
+            info!("step[{}] type={} → 跳过（标题/摘要生成类型）", i, step_type);
             continue;
         }
 
         // 提取文本内容
         let mut step_texts = Vec::new();
         extract_step_text_content(step, &mut step_texts);
+
+        // 诊断日志：dump step 的 JSON 结构（前3个step）
+        if i < 3 {
+            if let Value::Object(map) = step {
+                let keys_info: Vec<String> = map.iter().map(|(k, v)| {
+                    match v {
+                        Value::String(s) => format!("{}:str({})", k, s.len()),
+                        Value::Array(a) => format!("{}:arr({})", k, a.len()),
+                        Value::Object(m) => format!("{}:obj({}keys)", k, m.len()),
+                        Value::Number(n) => format!("{}:num({})", k, n),
+                        Value::Bool(b) => format!("{}:bool({})", k, b),
+                        Value::Null => format!("{}:null", k),
+                    }
+                }).collect();
+                info!("step[{}] type={} JSON结构: {}", i, step_type, keys_info.join(", "));
+            }
+        }
+
+        // 诊断日志：显示提取到的原始文本（前5个step详细记录）
+        if i < 5 {
+            for (ti, t) in step_texts.iter().enumerate() {
+                let preview: String = t.chars().take(150).collect();
+                info!("step[{}] 原始文本[{}]: len={}, preview={}", i, ti, t.len(), preview);
+            }
+        }
 
         // 过滤噪声
         let clean_texts: Vec<String> = step_texts
@@ -1084,14 +1320,26 @@ fn extract_from_trajectory_steps(root: &Value, prompt: &str, include_thinking: b
             .filter(|t| t.len() > 10)
             .filter(|t| t != prompt_trimmed)
             .filter(|t| !t.starts_with("CORTEX_"))
-            .filter(|t| !t.starts_with("CASCADE_"))
+            .filter(|t| !t.starts_with("CASCADE_STATUS") && !t.starts_with("CASCADE_STEP") && !t.starts_with("CASCADE_STATE"))
             .filter(|t| !t.starts_with("file:///"))
+            .filter(|t| !t.starts_with("bot-"))
+            .filter(|t| !t.starts_with("STOP_REASON_"))
+            .filter(|t| !t.starts_with("MODEL_PLACEHOLDER"))
             .filter(|t| !looks_like_uuid(t))
             .filter(|t| !looks_like_timestamp(t))
+            .filter(|t| !looks_like_duration_str(t))
             .filter(|t| !is_title_generation_content(t))
             .filter(|t| !looks_like_base64(t))
             .filter(|t| !is_system_context_content(t))
             .collect();
+
+        // 诊断日志：显示过滤后的文本
+        if i < 5 {
+            for (ti, t) in clean_texts.iter().enumerate() {
+                let preview: String = t.chars().take(150).collect();
+                info!("step[{}] 过滤后[{}]: len={}, preview={}", i, ti, t.len(), preview);
+            }
+        }
 
         if clean_texts.is_empty() {
             continue;
@@ -1120,21 +1368,9 @@ fn extract_from_trajectory_steps(root: &Value, prompt: &str, include_thinking: b
         }
     }
 
-    // 必须有正文
-    let response = response_texts
-        .iter()
-        .find(|(_, st, _)| st.contains("AGENT_MESSAGE") || st.contains("ASSISTANT"))
-        .or_else(|| {
-            response_texts.iter().max_by_key(|(_, _, text)| text.len())
-        })
-        .map(|(idx, st, text)| {
-            info!("trajectory 正文: step[{}] type={}, len={}", idx, st, text.len());
-            text.clone()
-        });
-
-    if response.is_none() {
+    // 拼接所有正文步骤（AI 回复可能被 LS 拆分到多个 step 里）
+    if response_texts.is_empty() {
         // 没有正文，但可能所有内容都被归类到了思考链
-        // 如果没有正文但有思考链，把最长的思考链当作正文返回
         if !thinking_texts.is_empty() {
             let fallback = thinking_texts.iter().max_by_key(|t| t.len()).cloned();
             info!("trajectory: 无正文但有思考链，降级使用思考链作为正文");
@@ -1143,7 +1379,42 @@ fn extract_from_trajectory_steps(root: &Value, prompt: &str, include_thinking: b
         return None;
     }
 
-    let response_text = response.unwrap();
+    // 合并正文步骤（去重：流式轮询时同一内容可能出现在多个 step）
+    let response_text: String = if response_texts.len() == 1 {
+        let (idx, st, text) = &response_texts[0];
+        info!("trajectory 正文: step[{}] type={}, len={}", idx, st, text.len());
+        text.clone()
+    } else {
+        // 按长度降序，优先保留长文本；跳过被其他文本包含的内容
+        let mut sorted: Vec<&(usize, String, String)> = response_texts.iter().collect();
+        sorted.sort_by(|a, b| b.2.len().cmp(&a.2.len()));
+
+        let mut unique_parts: Vec<&str> = Vec::new();
+        for (idx, st, text) in &sorted {
+            let is_subset = unique_parts.iter().any(|existing| existing.contains(text.as_str()));
+            if is_subset {
+                debug!("  step[{}] type={}, len={} → 跳过（已被包含）", idx, st, text.len());
+                continue;
+            }
+            info!("  step[{}] type={}, len={}", idx, st, text.len());
+            unique_parts.push(text.as_str());
+        }
+
+        info!("trajectory 正文: {} 个步骤去重后 {} 个独立部分", response_texts.len(), unique_parts.len());
+
+        if unique_parts.len() == 1 {
+            unique_parts[0].to_string()
+        } else {
+            // 按原始 step 顺序排列
+            let mut ordered: Vec<&str> = Vec::new();
+            for (_, _, text) in &response_texts {
+                if unique_parts.contains(&text.as_str()) && !ordered.contains(&text.as_str()) {
+                    ordered.push(text.as_str());
+                }
+            }
+            ordered.join("\n\n")
+        }
+    };
 
     // 根据 include_thinking 决定是否拼接思考链
     if include_thinking && !thinking_texts.is_empty() {
@@ -1253,9 +1524,10 @@ fn is_system_context_content(text: &str) -> bool {
     // Conversation History 摘要块
     if (trimmed.starts_with("Conversation History")
         || trimmed.starts_with("# Conversation History")
-        || trimmed.starts_with("Here are the conversation IDs"))
-        && trimmed.contains("conversation")
-        && trimmed.contains("Created:")
+        || trimmed.starts_with("Here are the conversation IDs")
+        || trimmed.starts_with("# Conversation Logs"))
+        && (trimmed.contains("conversation") || trimmed.contains("Conversation"))
+        && (trimmed.contains("Created:") || trimmed.contains("Last modified:"))
     {
         return true;
     }
@@ -1263,6 +1535,7 @@ fn is_system_context_content(text: &str) -> bool {
     // conversation_summaries 块
     if trimmed.contains("<conversation_summaries>")
         || trimmed.contains("</conversation_summaries>")
+        || trimmed.contains("conversation_summaries")
     {
         return true;
     }
@@ -1271,6 +1544,7 @@ fn is_system_context_content(text: &str) -> bool {
     if trimmed.contains("<USER_REQUEST>")
         || trimmed.contains("<ADDITIONAL_METADATA>")
         || trimmed.contains("<EPHEMERAL_MESSAGE>")
+        || trimmed.contains("<USER_SETTINGS_CHANGE>")
     {
         return true;
     }
@@ -1289,9 +1563,33 @@ fn is_system_context_content(text: &str) -> bool {
         return true;
     }
 
-    // 大量 "Conversation {uuid}" 条目 —— 是历史列表
+    // 大量 "Conversation" 条目 —— 是历史列表
     let conv_count = trimmed.matches("Conversation ").count();
-    if conv_count >= 3 && trimmed.contains("USER Objective") {
+    if conv_count >= 3 && (trimmed.contains("USER Objective") || trimmed.contains("Last modified:")) {
+        return true;
+    }
+
+    // 新增：检测 "Most recent N conversations" 格式
+    if trimmed.contains("most recent") && trimmed.contains("conversations") && trimmed.contains("reverse chronological") {
+        return true;
+    }
+
+    // 新增：Antigravity 内部的 MCP / artifact 元数据
+    if trimmed.contains("<mcp_servers>")
+        || trimmed.contains("<artifacts>")
+        || trimmed.contains("<identity>")
+        || trimmed.contains("<agentic_mode_overview>")
+        || trimmed.contains("<web_application_development>")
+        || trimmed.contains("<communication_style>")
+    {
+        return true;
+    }
+
+    // 新增：前一段对话的截断总结
+    if (trimmed.starts_with("The earlier parts of this conversation have been truncated")
+        || trimmed.contains("CHECKPOINT MESSAGE"))
+        && trimmed.len() > 500
+    {
         return true;
     }
 
@@ -1301,13 +1599,37 @@ fn looks_like_timestamp(s: &str) -> bool {
     s.len() > 20 && s.contains('T') && s.contains(':') && (s.ends_with('Z') || s.contains('+'))
 }
 
+/// 检测 protobuf Duration 格式字符串，如 "0.658818200s"、"12.345s"
+fn looks_like_duration_str(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.len() < 2 || !trimmed.ends_with('s') {
+        return false;
+    }
+    let num_part = &trimmed[..trimmed.len() - 1];
+    num_part.parse::<f64>().is_ok()
+}
+
 /// 检测内容是否是标题/摘要生成的系统输出
 fn is_title_generation_content(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    (lower.contains("conversation title") && lower.contains("objective"))
-        || (lower.contains("generating") && lower.contains("title"))
+    // 已知的标题/摘要生成模式
+    if (lower.contains("conversation title") && lower.contains("objective"))
+        || (lower.contains("generating") && lower.contains("title") && lower.len() < 200)
         || lower.starts_with("# conversation title")
         || lower.starts_with("generating conversation")
+    {
+        return true;
+    }
+    // 用户目标摘要（trajectory description metadata）
+    // 必须同时包含 "user's" + "main/primary goal" 且总长度较短（<500），避免匹配到正文
+    if text.len() < 500 {
+        if (lower.contains("the user's main goal") || lower.contains("the user's primary goal"))
+            && !lower.contains("```")  // 排除包含代码块的内容
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// 检测内容是否看起来像 base64 编码的二进制数据

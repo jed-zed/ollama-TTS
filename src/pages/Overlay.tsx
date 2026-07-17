@@ -15,9 +15,9 @@
 
 import React, { useEffect, useState, useMemo, useCallback, useRef, CSSProperties } from 'react';
 import { useTypewriter } from '@/hooks/useTypewriter';
-import { 
-  GripHorizontal, X, RotateCcw, MousePointer2, MousePointerClick, 
-  Mic, MicOff, Send, Type, Palette, Clock, Loader2, History
+import {
+  GripHorizontal, X, RotateCcw, MousePointer2, MousePointerClick,
+  Mic, MicOff, Send, Type, Palette, Clock, Loader2, History, MessageSquareOff, Settings2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -28,7 +28,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { subtitleWindow, isTauri } from '@/services/tauri';
 import { useConfigStore } from '@/stores/configStore';
 import { speechService } from '@/services/speech';
-import { API_BASE_URL, SCROLL_THRESHOLD } from '@/lib/constants';
+import { SCROLL_THRESHOLD } from '@/lib/constants';
+import { getBackendBaseUrl } from '@/lib/backendUrl';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -56,6 +57,8 @@ interface SubtitleConfig {
   autoShow: boolean;
   autoHide: boolean;
   autoHideDelay: number;
+  hideInput: boolean;
+  hideControls: boolean;
 }
 
 const DEFAULT_CONFIG: SubtitleConfig = {
@@ -68,6 +71,8 @@ const DEFAULT_CONFIG: SubtitleConfig = {
   autoShow: true,
   autoHide: true,
   autoHideDelay: 5,
+  hideInput: false,
+  hideControls: false,
 };
 
 const FONT_COLORS = [
@@ -118,10 +123,10 @@ const Overlay: React.FC = () => {
       return DEFAULT_CONFIG;
     }
   });
-  
+
   const [streamContent, setStreamContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  
+
   const [history, setHistory] = useState<Array<{ id: string; content: string; speaker?: string; timestamp: number }>>([]);
 
   const [clickThrough, setClickThrough] = useState(false);
@@ -132,7 +137,7 @@ const Overlay: React.FC = () => {
   const [speechConfig, setSpeechConfig] = useState<{ apiKey: string; secretKey: string } | null>(null);
   const [isUserSent, setIsUserSent] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
-  
+
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -144,7 +149,7 @@ const Overlay: React.FC = () => {
   } | null>(null);
   const geometrySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geometryRef = useRef(DEFAULT_WINDOW_GEOMETRY);
-  const handleCloseRef = useRef<() => void>(() => {});
+  const handleCloseRef = useRef<() => void>(() => { });
 
   const autoClose = config.autoHide;
   const autoCloseDelay = config.autoHideDelay;
@@ -167,7 +172,7 @@ const Overlay: React.FC = () => {
   useEffect(() => {
     const loadSpeechConfig = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/config`);
+        const response = await fetch(`${getBackendBaseUrl()}/api/config`);
         if (response.ok) {
           const result = await response.json();
           const configData = result.data || result;
@@ -197,20 +202,20 @@ const Overlay: React.FC = () => {
     subtitleWindow.onConfigUpdate((newConfig) => {
       setConfig(prev => ({
         ...prev,
-        opacity: typeof newConfig.subtitle_opacity === 'number' 
-          ? Math.round(newConfig.subtitle_opacity * 100) 
+        opacity: typeof newConfig.subtitle_opacity === 'number'
+          ? Math.round(newConfig.subtitle_opacity * 100)
           : prev.opacity,
-        fontSize: typeof newConfig.subtitle_font_size === 'number' 
-          ? newConfig.subtitle_font_size 
+        fontSize: typeof newConfig.subtitle_font_size === 'number'
+          ? newConfig.subtitle_font_size
           : prev.fontSize,
-        fontColor: typeof newConfig.subtitle_font_color === 'string' 
-          ? newConfig.subtitle_font_color 
+        fontColor: typeof newConfig.subtitle_font_color === 'string'
+          ? newConfig.subtitle_font_color
           : prev.fontColor,
-        bgColor: typeof newConfig.subtitle_bg_color === 'string' 
-          ? newConfig.subtitle_bg_color 
+        bgColor: typeof newConfig.subtitle_bg_color === 'string'
+          ? newConfig.subtitle_bg_color
           : prev.bgColor,
-        charDelay: typeof newConfig.char_delay === 'number' 
-          ? newConfig.char_delay 
+        charDelay: typeof newConfig.char_delay === 'number'
+          ? newConfig.char_delay
           : prev.charDelay,
         textOnly: typeof newConfig.subtitle_text_only === 'boolean'
           ? newConfig.subtitle_text_only
@@ -224,6 +229,12 @@ const Overlay: React.FC = () => {
         autoHideDelay: typeof newConfig.subtitle_auto_hide_delay === 'number'
           ? newConfig.subtitle_auto_hide_delay
           : prev.autoHideDelay,
+        hideInput: typeof newConfig.subtitle_hide_input === 'boolean'
+          ? newConfig.subtitle_hide_input
+          : prev.hideInput,
+        hideControls: typeof newConfig.subtitle_hide_controls === 'boolean'
+          ? newConfig.subtitle_hide_controls
+          : prev.hideControls,
       }));
     }).then(unsub => unsubscribers.push(unsub));
 
@@ -234,7 +245,7 @@ const Overlay: React.FC = () => {
       if (content.isStreaming) {
         setSelectedHistoryId(null);
       }
-      
+
       if (content.text && !content.isStreaming) {
         setHistory(prev => {
           const newItem = {
@@ -268,13 +279,13 @@ const Overlay: React.FC = () => {
       clearTimeout(autoCloseTimerRef.current);
       autoCloseTimerRef.current = null;
     }
-    
+
     if (!isStreaming && !isTyping && streamContent && autoClose && !isUserSent) {
       autoCloseTimerRef.current = setTimeout(() => {
         handleCloseRef.current();
       }, autoCloseDelay * 1000);
     }
-    
+
     return () => {
       if (autoCloseTimerRef.current) {
         clearTimeout(autoCloseTimerRef.current);
@@ -318,7 +329,7 @@ const Overlay: React.FC = () => {
     }
 
     const bgOpacity = config.opacity / 100;
-    
+
     if (bgOpacity === 0) {
       return {
         backgroundColor: 'transparent',
@@ -326,9 +337,9 @@ const Overlay: React.FC = () => {
         opacity: 0,
       };
     }
-    
+
     const bgColor = config.bgColor;
-    
+
     // 处理渐变（linear-gradient, radial-gradient 等）
     if (bgColor.includes('gradient')) {
       return {
@@ -337,7 +348,7 @@ const Overlay: React.FC = () => {
         opacity: bgOpacity,
       };
     }
-    
+
     // 处理透明
     if (bgColor === 'transparent') {
       return {
@@ -346,7 +357,7 @@ const Overlay: React.FC = () => {
         opacity: bgOpacity,
       };
     }
-    
+
     // 处理十六进制颜色 #ffffff 或 #fff
     let background: string;
     if (bgColor.startsWith('#')) {
@@ -358,11 +369,11 @@ const Overlay: React.FC = () => {
       const g = parseInt(hex.slice(2, 4), 16);
       const b = parseInt(hex.slice(4, 6), 16);
       background = `rgb(${r}, ${g}, ${b})`;
-    } 
+    }
     // 处理 rgb(r, g, b)
     else if (bgColor.startsWith('rgb(')) {
       background = bgColor;
-    } 
+    }
     // 处理 rgba(r, g, b, a) - 提取 rgb 部分
     else if (bgColor.startsWith('rgba(')) {
       const match = bgColor.match(/rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\d.]+\s*\)/);
@@ -371,11 +382,11 @@ const Overlay: React.FC = () => {
       } else {
         background = bgColor;
       }
-    } 
+    }
     else {
       background = bgColor;
     }
-    
+
     return {
       backgroundColor: background,
       backdropFilter: `blur(${Math.round(bgOpacity * 12)}px)`,
@@ -447,7 +458,7 @@ const Overlay: React.FC = () => {
 
         let configData: Record<string, unknown> = {};
         try {
-          const response = await fetch(`${API_BASE_URL}/api/config`);
+          const response = await fetch(`${getBackendBaseUrl()}/api/config`);
           if (response.ok) {
             const result = await response.json();
             configData = (result.data || result) as Record<string, unknown>;
@@ -525,7 +536,7 @@ const Overlay: React.FC = () => {
       setStreamContent(inputText.trim());
       navigator.clipboard.writeText(inputText.trim());
       setInputText('');
-      
+
       setHistory(prev => [{
         id: Date.now().toString(),
         content: inputText.trim(),
@@ -543,13 +554,13 @@ const Overlay: React.FC = () => {
 
   const handleMicToggle = useCallback(async () => {
     if (isRecognizing) return;
-    
+
     if (!isRecording) {
       if (!speechConfig) {
         toast.warning('请先在设置中配置百度语音 API');
         return;
       }
-      
+
       const success = await speechService.startRecording();
       if (success) {
         setIsRecording(true);
@@ -560,7 +571,7 @@ const Overlay: React.FC = () => {
     } else {
       setIsRecording(false);
       setIsRecognizing(true);
-      
+
       try {
         const audioBlob = await speechService.stopRecording();
         if (!audioBlob || !speechConfig) {
@@ -568,8 +579,11 @@ const Overlay: React.FC = () => {
           return;
         }
 
-        const result = await speechService.recognize(audioBlob, speechConfig);
-        
+        const result = await speechService.recognize(audioBlob, {
+          engine: 'baidu',
+          baidu: speechConfig,
+        });
+
         if (result.success && result.text) {
           setInputText(prev => prev + result.text);
         }
@@ -591,182 +605,252 @@ const Overlay: React.FC = () => {
     updateConfig('subtitle_auto_show', DEFAULT_CONFIG.autoShow);
     updateConfig('subtitle_auto_hide', DEFAULT_CONFIG.autoHide);
     updateConfig('subtitle_auto_hide_delay', DEFAULT_CONFIG.autoHideDelay);
+    updateConfig('subtitle_hide_input', DEFAULT_CONFIG.hideInput);
+    updateConfig('subtitle_hide_controls', DEFAULT_CONFIG.hideControls);
   }, [updateConfig]);
 
   return (
     <div
       className="w-screen h-screen flex flex-col select-none"
-      style={{ 
+      style={{
         pointerEvents: clickThrough ? 'none' : 'auto',
         overflow: 'hidden',
         background: 'transparent',
       }}
     >
-      {!config.textOnly && (
-      <div className="relative" style={{ pointerEvents: 'auto' }}>
-        <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
-        <div className="relative z-10 flex flex-wrap items-center gap-2 px-3 py-1.5" style={{ color: config.fontColor }}>
-          <div 
-            className="flex items-center gap-2 cursor-move opacity-50"
-            onMouseDown={startWindowDrag}
-          >
-            <GripHorizontal className="w-4 h-4" />
-            <span className="text-xs">拖动</span>
-          </div>
-
-        {/* 中间：控件 */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs flex-1 min-w-0">
-          {/* 字号 */}
-          <div className="flex items-center gap-1.5">
-            <Type className="w-3 h-3 opacity-70" />
-            <Slider 
-              value={[config.fontSize]} 
-              onValueChange={(v) => setConfig(prev => ({ ...prev, fontSize: v[0] }))} 
-              max={48} min={12} step={2} 
-              className="w-14" 
-            />
-            <span className="opacity-50 w-6">{config.fontSize}</span>
-          </div>
-
-          {/* 透明度 */}
-          <div className="flex items-center gap-1.5">
-            <span className="opacity-70">透明</span>
-            <Slider 
-              value={[config.opacity]} 
-              onValueChange={(v) => setConfig(prev => ({ ...prev, opacity: v[0] }))} 
-              max={100} min={0} step={5} 
-              className="w-14" 
-            />
-            <span className="opacity-50 w-6">{config.opacity}%</span>
-          </div>
-
-          {/* 速度 */}
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3 h-3 opacity-70" />
-            <span className="opacity-70">速度</span>
-            <Slider 
-              value={[config.charDelay]} 
-              onValueChange={(v) => setConfig(prev => ({ ...prev, charDelay: v[0] }))} 
-              max={100} min={10} step={5} 
-              className="w-12" 
-            />
-            <span className="opacity-50 w-8">{config.charDelay}ms</span>
-          </div>
-
-          {/* 颜色选择 */}
-          <div className="flex items-center gap-1">
-            <Palette className="w-3 h-3 opacity-70" />
-            {FONT_COLORS.map(color => (
-              <button
-                key={color.value}
-                className={`w-4 h-4 rounded-full border-2 ${config.fontColor === color.value ? 'border-white' : 'border-transparent'}`}
-                style={{ backgroundColor: color.value }}
-                onClick={() => setConfig(prev => ({ ...prev, fontColor: color.value }))}
-                title={color.name}
-              />
-            ))}
-          </div>
-
-          {/* 自动关闭 */}
-          <div className="flex items-center gap-1.5">
-            <Checkbox
-              id="auto-close"
-              checked={autoClose}
-              onCheckedChange={(checked) => {
-                const enabled = checked as boolean;
-                setConfig(prev => ({ ...prev, autoHide: enabled }));
-                updateConfig('subtitle_auto_hide', enabled);
+      {/* 控件被隐藏时显示恢复按钮 */}
+      {!config.textOnly && config.hideControls && (
+        <div className="relative" style={{ pointerEvents: 'auto' }}>
+          <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
+          <div className="relative z-10 flex items-center gap-1 px-2 py-1">
+            <button
+              className="flex items-center gap-1 px-2 py-1 rounded-lg opacity-30 hover:opacity-80 transition-opacity cursor-pointer"
+              style={{ color: config.fontColor }}
+              onClick={() => {
+                setConfig(prev => ({ ...prev, hideControls: false }));
+                updateConfig('subtitle_hide_controls', false);
               }}
-              className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
-            />
-            <Label htmlFor="auto-close" className="text-xs opacity-80 cursor-pointer select-none">自动隐藏</Label>
-            <Slider 
-              value={[autoCloseDelay]} 
-              onValueChange={(v) => {
-                const delay = v[0];
-                setConfig(prev => ({ ...prev, autoHideDelay: delay }));
-                updateConfig('subtitle_auto_hide_delay', delay);
-              }} 
-              max={30} min={1} step={1} 
-              className="w-10" 
-              disabled={!autoClose}
-            />
-            <span className="opacity-50 w-5">{autoCloseDelay}s</span>
-          </div>
-
-          {/* 穿透 */}
-          <div className="flex items-center gap-1">
-            <Checkbox
-              id="click-through"
-              checked={clickThrough}
-              onCheckedChange={(checked) => setClickThrough(checked as boolean)}
-              className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
-            />
-            <Label htmlFor="click-through" className="opacity-70 text-xs cursor-pointer flex items-center gap-0.5">
-              {clickThrough ? <MousePointer2 className="w-3 h-3" /> : <MousePointerClick className="w-3 h-3" />}
-              穿透
-            </Label>
-          </div>
-
-          {/* 流式状态 */}
-          {isStreaming && (
-            <span className="flex items-center gap-1 text-green-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              输出中
-            </span>
-          )}
-
-          {/* 历史记录选择器 */}
-          {history.length > 0 && (
-            <div className="flex items-center gap-1">
-              <History className="w-3 h-3 opacity-70" />
-              <Select 
-                value={selectedHistoryId || 'current'} 
-                onValueChange={(v) => setSelectedHistoryId(v === 'current' ? null : v)}
-              >
-                <SelectTrigger className="h-6 w-20 text-xs bg-white/10 border-white/20">
-                  <SelectValue placeholder="历史" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="current">当前</SelectItem>
-                  {history.slice(0, 6).map((item, index) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {index + 1}. {item.content.slice(0, 10)}...
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              title="显示控件"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span className="text-xs">显示控件</span>
+            </button>
+            <div className="flex-1" />
+            <div
+              className="flex items-center gap-1 cursor-move opacity-30 hover:opacity-60"
+              style={{ color: config.fontColor }}
+              onMouseDown={startWindowDrag}
+            >
+              <GripHorizontal className="w-3.5 h-3.5" />
             </div>
-          )}
+            <Button variant="ghost" size="icon" className="w-5 h-5 opacity-30 hover:text-red-400 hover:opacity-80 hover:bg-red-500/20" style={{ color: config.fontColor }} onClick={handleClose}>
+              <X className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
+      )}
 
-        {/* 右侧：操作按钮 */}
-        <div className="flex items-center gap-1 ml-auto">
-          <Button variant="ghost" size="sm" className="h-6 px-2 opacity-70 hover:opacity-100 hover:bg-white/10" onClick={handleClear}>
-            清空
-          </Button>
-          <Button variant="ghost" size="sm" className="h-6 px-2 opacity-70 hover:opacity-100 hover:bg-white/10" onClick={handleResetDefaults}>
-            <RotateCcw className="w-3 h-3" />
-          </Button>
-          <Button variant="ghost" size="icon" className="w-6 h-6 opacity-70 hover:text-red-400 hover:bg-red-500/20" onClick={handleClose}>
-            <X className="w-4 h-4" />
-          </Button>
+      {!config.textOnly && !config.hideControls && (
+        <div className="relative" style={{ pointerEvents: 'auto' }}>
+          <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
+          <div className="relative z-10 flex flex-wrap items-center gap-2 px-3 py-1.5" style={{ color: config.fontColor }}>
+            <div
+              className="flex items-center gap-2 cursor-move opacity-50"
+              onMouseDown={startWindowDrag}
+            >
+              <GripHorizontal className="w-4 h-4" />
+              <span className="text-xs">拖动</span>
+            </div>
+
+            {/* 中间：控件 */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs flex-1 min-w-0">
+              {/* 字号 */}
+              <div className="flex items-center gap-1.5">
+                <Type className="w-3 h-3 opacity-70" />
+                <Slider
+                  value={[config.fontSize]}
+                  onValueChange={(v) => setConfig(prev => ({ ...prev, fontSize: v[0] }))}
+                  max={48} min={12} step={2}
+                  className="w-14"
+                />
+                <span className="opacity-50 w-6">{config.fontSize}</span>
+              </div>
+
+              {/* 透明度 */}
+              <div className="flex items-center gap-1.5">
+                <span className="opacity-70">透明</span>
+                <Slider
+                  value={[config.opacity]}
+                  onValueChange={(v) => setConfig(prev => ({ ...prev, opacity: v[0] }))}
+                  max={100} min={0} step={5}
+                  className="w-14"
+                />
+                <span className="opacity-50 w-6">{config.opacity}%</span>
+              </div>
+
+              {/* 速度 */}
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3 h-3 opacity-70" />
+                <span className="opacity-70">速度</span>
+                <Slider
+                  value={[config.charDelay]}
+                  onValueChange={(v) => setConfig(prev => ({ ...prev, charDelay: v[0] }))}
+                  max={100} min={10} step={5}
+                  className="w-12"
+                />
+                <span className="opacity-50 w-8">{config.charDelay}ms</span>
+              </div>
+
+              {/* 颜色选择 */}
+              <div className="flex items-center gap-1">
+                <Palette className="w-3 h-3 opacity-70" />
+                {FONT_COLORS.map(color => (
+                  <button
+                    key={color.value}
+                    className={`w-4 h-4 rounded-full border-2 ${config.fontColor === color.value ? 'border-white' : 'border-transparent'}`}
+                    style={{ backgroundColor: color.value }}
+                    onClick={() => setConfig(prev => ({ ...prev, fontColor: color.value }))}
+                    title={color.name}
+                  />
+                ))}
+              </div>
+
+              {/* 自动关闭 */}
+              <div className="flex items-center gap-1.5">
+                <Checkbox
+                  id="auto-close"
+                  checked={autoClose}
+                  onCheckedChange={(checked) => {
+                    const enabled = checked as boolean;
+                    setConfig(prev => ({ ...prev, autoHide: enabled }));
+                    updateConfig('subtitle_auto_hide', enabled);
+                  }}
+                  className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
+                />
+                <Label htmlFor="auto-close" className="text-xs opacity-80 cursor-pointer select-none">自动隐藏</Label>
+                <Slider
+                  value={[autoCloseDelay]}
+                  onValueChange={(v) => {
+                    const delay = v[0];
+                    setConfig(prev => ({ ...prev, autoHideDelay: delay }));
+                    updateConfig('subtitle_auto_hide_delay', delay);
+                  }}
+                  max={30} min={1} step={1}
+                  className="w-10"
+                  disabled={!autoClose}
+                />
+                <span className="opacity-50 w-5">{autoCloseDelay}s</span>
+              </div>
+
+              {/* 穿透 */}
+              <div className="flex items-center gap-1">
+                <Checkbox
+                  id="click-through"
+                  checked={clickThrough}
+                  onCheckedChange={(checked) => setClickThrough(checked as boolean)}
+                  className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
+                />
+                <Label htmlFor="click-through" className="opacity-70 text-xs cursor-pointer flex items-center gap-0.5">
+                  {clickThrough ? <MousePointer2 className="w-3 h-3" /> : <MousePointerClick className="w-3 h-3" />}
+                  穿透
+                </Label>
+              </div>
+
+              {/* 隐藏输入框 */}
+              <div className="flex items-center gap-1">
+                <Checkbox
+                  id="hide-input"
+                  checked={config.hideInput}
+                  onCheckedChange={(checked) => {
+                    const hidden = checked as boolean;
+                    setConfig(prev => ({ ...prev, hideInput: hidden }));
+                    updateConfig('subtitle_hide_input', hidden);
+                  }}
+                  className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
+                />
+                <Label htmlFor="hide-input" className="opacity-70 text-xs cursor-pointer flex items-center gap-0.5">
+                  <MessageSquareOff className="w-3 h-3" />
+                  隐藏输入
+                </Label>
+              </div>
+
+              {/* 隐藏控件 */}
+              <div className="flex items-center gap-1">
+                <Checkbox
+                  id="hide-controls"
+                  checked={config.hideControls}
+                  onCheckedChange={(checked) => {
+                    const hidden = checked as boolean;
+                    setConfig(prev => ({ ...prev, hideControls: hidden }));
+                    updateConfig('subtitle_hide_controls', hidden);
+                  }}
+                  className="w-3 h-3 data-[state=checked]:bg-pink-500 border-white/30"
+                />
+                <Label htmlFor="hide-controls" className="opacity-70 text-xs cursor-pointer flex items-center gap-0.5">
+                  <Settings2 className="w-3 h-3" />
+                  隐藏控件
+                </Label>
+              </div>
+
+              {/* 流式状态 */}
+              {isStreaming && (
+                <span className="flex items-center gap-1 text-green-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  输出中
+                </span>
+              )}
+
+              {/* 历史记录选择器 */}
+              {history.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <History className="w-3 h-3 opacity-70" />
+                  <Select
+                    value={selectedHistoryId || 'current'}
+                    onValueChange={(v) => setSelectedHistoryId(v === 'current' ? null : v)}
+                  >
+                    <SelectTrigger className="h-6 w-20 text-xs bg-white/10 border-white/20">
+                      <SelectValue placeholder="历史" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current">当前</SelectItem>
+                      {history.slice(0, 6).map((item, index) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {index + 1}. {item.content.slice(0, 10)}...
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+
+            {/* 右侧：操作按钮 */}
+            <div className="flex items-center gap-1 ml-auto">
+              <Button variant="ghost" size="sm" className="h-6 px-2 opacity-70 hover:opacity-100 hover:bg-white/10" onClick={handleClear}>
+                清空
+              </Button>
+              <Button variant="ghost" size="sm" className="h-6 px-2 opacity-70 hover:opacity-100 hover:bg-white/10" onClick={handleResetDefaults}>
+                <RotateCcw className="w-3 h-3" />
+              </Button>
+              <Button variant="ghost" size="icon" className="w-6 h-6 opacity-70 hover:text-red-400 hover:bg-red-500/20" onClick={handleClose}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
         </div>
-        </div>
-      </div>
       )}
 
       {/* 字幕内容区 - 分层结构 + 滚动功能 */}
       <div className="flex-1 relative min-h-0">
         {!config.textOnly && (
-        <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
+          <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
         )}
         {/* 内容层 - 使用 absolute 填满容器，确保滚动正常工作 */}
-        <div 
+        <div
           ref={scrollRef}
           className="absolute inset-0 z-10 overflow-y-auto p-6"
           onScroll={handleScroll}
-          style={{ 
+          style={{
             scrollbarWidth: 'thin',
             scrollbarColor: 'rgba(255,255,255,0.3) transparent',
           }}
@@ -777,11 +861,11 @@ const Overlay: React.FC = () => {
             {!config.textOnly && history.length > 0 && (
               <div className="w-full space-y-1 mb-2">
                 {history.slice(0, 10).reverse().map(item => (
-                  <p 
+                  <p
                     key={item.id}
                     className="leading-relaxed font-medium text-center max-w-full opacity-50 whitespace-pre-wrap"
-                    style={{ 
-                      fontSize: `${Math.max(12, config.fontSize - 4)}px`, 
+                    style={{
+                      fontSize: `${Math.max(12, config.fontSize - 4)}px`,
                       color: config.fontColor,
                       textShadow: '0 1px 2px rgba(0,0,0,0.3)',
                     }}
@@ -791,12 +875,12 @@ const Overlay: React.FC = () => {
                 ))}
               </div>
             )}
-            
+
             {/* 当前字幕文本 */}
-            <p 
+            <p
               className={`leading-relaxed font-medium max-w-full whitespace-pre-wrap ${(isStreaming || isTyping) ? 'text-left' : 'text-center'}`}
-              style={{ 
-                fontSize: `${config.fontSize}px`, 
+              style={{
+                fontSize: `${config.fontSize}px`,
                 color: config.fontColor,
                 textShadow: '0 2px 4px rgba(0,0,0,0.5)',
               }}
@@ -808,75 +892,75 @@ const Overlay: React.FC = () => {
             </p>
           </div>
         </div>
-        
+
         {!config.textOnly && (
-        <>
-        <div className="absolute top-2 right-4 opacity-10 pointer-events-none z-20">
-          <svg width="60" height="60" viewBox="0 0 100 100" fill="none">
-            <path d="M50 0C50 0 50 50 100 50C50 50 50 100 50 100C50 100 50 50 0 50C50 50 50 0 50 0Z" fill="#EC4899"/>
-          </svg>
-        </div>
-        <div className="absolute bottom-2 left-2 w-1/4 h-0.5 bg-gradient-to-r from-pink-400/30 to-transparent rounded-full pointer-events-none z-20" />
-        <div className="absolute bottom-4 right-6 pointer-events-none z-20">
-          <span className="text-pink-300/50 text-lg animate-pulse">✦</span>
-        </div>
-        </>
+          <>
+            <div className="absolute top-2 right-4 opacity-10 pointer-events-none z-20">
+              <svg width="60" height="60" viewBox="0 0 100 100" fill="none">
+                <path d="M50 0C50 0 50 50 100 50C50 50 50 100 50 100C50 100 50 50 0 50C50 50 50 0 50 0Z" fill="#EC4899" />
+              </svg>
+            </div>
+            <div className="absolute bottom-2 left-2 w-1/4 h-0.5 bg-gradient-to-r from-pink-400/30 to-transparent rounded-full pointer-events-none z-20" />
+            <div className="absolute bottom-4 right-6 pointer-events-none z-20">
+              <span className="text-pink-300/50 text-lg animate-pulse">✦</span>
+            </div>
+          </>
         )}
       </div>
 
-      {!config.textOnly && (
-      <div className="relative" style={{ pointerEvents: 'auto' }}>
-        <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
-        <div className="relative z-10 flex items-center gap-2 px-3 py-2" style={{ color: config.fontColor }}>
-          {/* 麦克风按钮 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`w-8 h-8 ${isRecording ? 'text-red-400 bg-red-500/20 animate-pulse' : isRecognizing ? 'text-blue-400 bg-blue-500/20' : 'opacity-70 hover:opacity-100 hover:bg-white/10'}`}
-            onClick={handleMicToggle}
-            disabled={isRecognizing}
-            title={isRecording ? '点击停止录音' : '点击开始语音输入'}
-          >
-            {isRecognizing ? <Loader2 className="w-4 h-4 animate-spin" /> : isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </Button>
+      {!config.textOnly && !config.hideInput && (
+        <div className="relative" style={{ pointerEvents: 'auto' }}>
+          <div className="absolute inset-0 pointer-events-none" style={bgLayerStyle} />
+          <div className="relative z-10 flex items-center gap-2 px-3 py-2" style={{ color: config.fontColor }}>
+            {/* 麦克风按钮 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`w-8 h-8 ${isRecording ? 'text-red-400 bg-red-500/20 animate-pulse' : isRecognizing ? 'text-blue-400 bg-blue-500/20' : 'opacity-70 hover:opacity-100 hover:bg-white/10'}`}
+              onClick={handleMicToggle}
+              disabled={isRecognizing}
+              title={isRecording ? '点击停止录音' : '点击开始语音输入'}
+            >
+              {isRecognizing ? <Loader2 className="w-4 h-4 animate-spin" /> : isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </Button>
 
-          {/* 输入框 */}
-          <Input
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="输入文本，回车发送并复制..."
-            className="flex-1 h-8 text-sm bg-white/10 border-white/20 placeholder:opacity-40 focus:border-pink-400"
-            style={{ color: config.fontColor }}
-          />
+            {/* 输入框 */}
+            <Input
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="输入文本，回车发送并复制..."
+              className="flex-1 h-8 text-sm bg-white/10 border-white/20 placeholder:opacity-40 focus:border-pink-400"
+              style={{ color: config.fontColor }}
+            />
 
-          {/* 发送按钮 */}
-          <Button
-            size="sm"
-            className="h-8 px-4 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white"
-            onClick={handleSend}
-          >
-            <Send className="w-3 h-3 mr-1" />
-            发送
-          </Button>
+            {/* 发送按钮 */}
+            <Button
+              size="sm"
+              className="h-8 px-4 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white"
+              onClick={handleSend}
+            >
+              <Send className="w-3 h-3 mr-1" />
+              发送
+            </Button>
 
-          {/* 调整大小手柄 */}
-          <div className="w-4 h-4 cursor-se-resize flex items-end justify-end opacity-30 hover:opacity-50">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-              <path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
+            {/* 调整大小手柄 */}
+            <div className="w-4 h-4 cursor-se-resize flex items-end justify-end opacity-30 hover:opacity-50">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                <path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </div>
           </div>
         </div>
-      </div>
       )}
 
       {!config.textOnly && (
-      <>
-      <div className="absolute -bottom-0.5 -left-0.5 w-3 h-3 border-b-2 border-l-2 border-pink-400/50 rounded-bl-lg pointer-events-none" />
-      <div className="absolute -top-0.5 -right-0.5 w-3 h-3 border-t-2 border-r-2 border-pink-400/50 rounded-tr-lg pointer-events-none" />
-      </>
+        <>
+          <div className="absolute -bottom-0.5 -left-0.5 w-3 h-3 border-b-2 border-l-2 border-pink-400/50 rounded-bl-lg pointer-events-none" />
+          <div className="absolute -top-0.5 -right-0.5 w-3 h-3 border-t-2 border-r-2 border-pink-400/50 rounded-tr-lg pointer-events-none" />
+        </>
       )}
-      
+
       {/* Toast 通知 */}
       <Toaster position="top-center" richColors />
     </div>

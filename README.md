@@ -1,73 +1,56 @@
-# React + TypeScript + Vite
+# Ollama TTS Adapter
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Ollama TTS Adapter 是一个基于 React、Vite、Rust 和 Tauri 2 的 Windows 桌面应用，提供 Ollama/OpenAI 兼容代理、字幕、语音输入和 GPT-SoVITS 语音合成能力。
 
-Currently, two official plugins are available:
+## 环境要求
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Node.js 22（Vite 7 要求 Node.js `20.19+` 或 `22.12+`）
+- Rust stable `1.88+`（当前锁文件中的依赖要求）
+- Windows + Visual Studio C++ Build Tools
+- WebView2 Runtime
 
-## React Compiler
+## 克隆与安装
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+`tauri-plugin-mcp` 是构建所需的 Git 子模块，请递归克隆：
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+git clone --recurse-submodules https://github.com/jed-zed/ollama-TTS.git
+cd ollama-TTS
+npm ci
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+如果已经普通克隆，补齐子模块：
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+git submodule update --init --recursive
 ```
+
+## 开发与验证
+
+```powershell
+npm run dev
+npm run check
+npm run test:rust
+```
+
+`npm run check` 会运行 ESLint、TypeScript 类型检查和带锁文件的 Cargo 检查。
+
+## 生产构建
+
+构建前端资源：
+
+```powershell
+npm run build
+```
+
+构建并打包 Tauri 桌面应用：
+
+```powershell
+npm run tauri -- build
+```
+
+可执行文件与安装包会生成在 `src-tauri/target/release/` 和 `src-tauri/target/release/bundle/` 下。
+
+## 配置安全
+
+`config.json` 可能包含 API 密钥和本机路径。提交前请确认其中没有真实凭据；GitHub Actions 构建不需要个人 API 密钥。

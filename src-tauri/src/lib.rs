@@ -48,8 +48,9 @@ fn sanitize_subtitle_window_geometry(x: i32, y: i32, width: i32, height: i32) ->
 
 /// 获取后端 URL
 #[tauri::command]
-fn get_backend_url() -> String {
-    "http://localhost:8765".to_string()
+fn get_backend_url(state: tauri::State<'_, AppState>) -> String {
+    let port = state.config_store.get().main_api_port;
+    format!("http://127.0.0.1:{port}")
 }
 
 /// 启动后端服务（代理服务器）
@@ -279,7 +280,9 @@ pub fn run() {
             let broadcaster = Arc::new(SseBroadcaster::new(100));
 
             // 初始化 tracing subscriber，将日志转发到 SSE Broadcaster
+            // 注意：BroadcasterLayer 默认未激活，启动完成后再激活
             let broadcaster_layer = BroadcasterLayer::new(broadcaster.clone());
+            let log_activation = broadcaster_layer.activation_handle();
             let fmt_layer = tracing_subscriber::fmt::layer()
                 .with_target(true)
                 .with_level(true);
@@ -306,11 +309,15 @@ pub fn run() {
             let config_store = ConfigStore::new(config_path);
 
             // 启动 HTTP 服务器（只启动主 API，代理由用户控制）
+            // 重量级初始化（角色加载、TTS引擎等）已移至后台异步执行
             tracing::info!("Starting HTTP server...");
             let app_state = server::spawn_server_with_broadcaster(config_store, broadcaster);
             
             // 将 AppState 注册到 Tauri 状态管理
             app.manage(app_state);
+
+            // 启动完成，激活日志转发到 SSE
+            log_activation.store(true, std::sync::atomic::Ordering::Relaxed);
 
             Ok(())
         })

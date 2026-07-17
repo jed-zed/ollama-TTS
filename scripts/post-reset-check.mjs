@@ -8,17 +8,24 @@ const args = new Set(process.argv.slice(2))
 const fullMode = args.has("--full")
 
 const requiredPaths = [
+  ".gitmodules",
+  ".github/workflows/build.yml",
   "package.json",
   "vite.config.ts",
   "tsconfig.json",
   "src/main.tsx",
   "src/App.tsx",
+  "src/lib/backendUrl.ts",
+  "src/lib/constants.ts",
   "src/lib/utils.ts",
   "src/components/ui/input.tsx",
   "src/services/tts.ts",
   "src/stores/ttsStore.ts",
   "src-tauri/Cargo.toml",
   "src-tauri/tauri.conf.json",
+  "src-tauri/icons/32x32.png",
+  "src-tauri/icons/128x128.png",
+  "src-tauri/icons/128x128@2x.png",
   "src-tauri/src/main.rs",
   "src-tauri/src/services/audio_player.rs",
   "src-tauri/src/services/tts_parser.rs"
@@ -50,10 +57,21 @@ if (unexpected.length > 0) {
 console.log("[post-reset-check] 关键文件检查通过")
 
 function run(command, commandArgs, cwd = root) {
-  const result = spawnSync(command, commandArgs, {
+  let executable = command
+  let executableArgs = commandArgs
+
+  // Windows cannot execute npm.cmd with shell:false (spawnSync returns EINVAL).
+  // npm_execpath points at npm-cli.js when this script is launched via npm,
+  // so invoke that JavaScript entrypoint with Node and keep shell execution off.
+  if (command === "npm" && process.env.npm_execpath) {
+    executable = process.execPath
+    executableArgs = [process.env.npm_execpath, ...commandArgs]
+  }
+
+  const result = spawnSync(executable, executableArgs, {
     cwd,
     stdio: "inherit",
-    shell: process.platform === "win32"
+    shell: false
   })
 
   if (result.status !== 0) {
@@ -62,9 +80,8 @@ function run(command, commandArgs, cwd = root) {
 }
 
 if (fullMode) {
-  console.log("[post-reset-check] 开始完整校验：build + tsc + cargo check")
+  console.log("[post-reset-check] 开始完整校验：build + cargo check")
   run("npm", ["run", "build"])
-  run("npx", ["tsc", "--noEmit"])
-  run("cargo", ["check", "-q"], path.join(root, "src-tauri"))
+  run("cargo", ["check", "--locked", "-q"], path.join(root, "src-tauri"))
   console.log("[post-reset-check] 完整校验通过")
 }
