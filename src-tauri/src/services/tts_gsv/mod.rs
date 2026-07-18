@@ -6,16 +6,16 @@
 //! - synthesizer: 合成请求构建与发送
 //! - text_splitter: 长文本智能切分
 
-pub mod types;
 mod emotion;
 mod synthesizer;
 mod text_splitter;
+pub mod types;
 
+use reqwest::Url;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-use reqwest::Url;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::models::config::{Config, GsvCharacterConfig};
 use crate::models::tts_types::{TtsRequest, TtsResult};
@@ -102,7 +102,9 @@ impl GPTSoVITSEngine {
         self.max_ref_audios = config.gsv_max_ref_audios;
         self.emotion_threshold = config.gsv_emotion_threshold;
 
-        let configs_to_load: Vec<(String, String)> = self.gsv_characters.iter()
+        let configs_to_load: Vec<(String, String)> = self
+            .gsv_characters
+            .iter()
             .filter(|(_, char_config)| !char_config.emotion_audio_json.is_empty())
             .map(|(char_id, char_config)| (char_id.clone(), char_config.emotion_audio_json.clone()))
             .collect();
@@ -123,11 +125,11 @@ impl GPTSoVITSEngine {
             return Err(format!("配置文件不存在: {}", json_path));
         }
 
-        let content = std::fs::read_to_string(json_path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+        let content =
+            std::fs::read_to_string(json_path).map_err(|e| format!("读取文件失败: {}", e))?;
 
-        let config: EmotionAudioConfig = serde_json::from_str(&content)
-            .map_err(|e| format!("解析 JSON 失败: {}", e))?;
+        let config: EmotionAudioConfig =
+            serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}", e))?;
 
         self.emotion_audio_cache.insert(char_id.to_string(), config);
         info!("加载情感音频配置: {} -> {}", char_id, json_path);
@@ -142,11 +144,19 @@ impl GPTSoVITSEngine {
                 if parts.len() >= 2 {
                     let char_dir = parts[parts.len() - 2];
                     let filename = parts[parts.len() - 1];
-                    let prefix = self.server_path_prefix.replace('\\', "/").trim_end_matches('/').to_string();
+                    let prefix = self
+                        .server_path_prefix
+                        .replace('\\', "/")
+                        .trim_end_matches('/')
+                        .to_string();
                     return format!("{}/{}/{}", prefix, char_dir, filename);
                 }
             }
-            return format!("{}/{}", self.server_path_prefix.trim_end_matches('/'), audio_info.audio_file);
+            return format!(
+                "{}/{}",
+                self.server_path_prefix.trim_end_matches('/'),
+                audio_info.audio_file
+            );
         }
 
         if !ref_audio_dir.is_empty() {
@@ -154,24 +164,48 @@ impl GPTSoVITSEngine {
             return path.to_string_lossy().to_string();
         }
 
-        audio_info.full_path.clone().unwrap_or_else(|| audio_info.audio_file.clone())
+        audio_info
+            .full_path
+            .clone()
+            .unwrap_or_else(|| audio_info.audio_file.clone())
     }
 
     fn resolve_target_character(&self, speaker: &str, gender: &str) -> String {
-        info!("🔍 角色解析: speaker={}, gender={}",
-              if speaker.is_empty() { "(空)" } else { speaker },
-              if gender.is_empty() { "(空)" } else { gender });
-        info!("   📋 可用角色: {:?}", self.gsv_characters.keys().collect::<Vec<_>>());
-        info!("   ⚙️ 默认配置: 男性={}, 女性={}, GUI当前={}",
-              if self.default_male_character.is_empty() { "(未设置)" } else { &self.default_male_character },
-              if self.default_female_character.is_empty() { "(未设置)" } else { &self.default_female_character },
-              if self.current_gsv_character.is_empty() { "(未设置)" } else { &self.current_gsv_character });
+        info!(
+            "🔍 角色解析: speaker={}, gender={}",
+            if speaker.is_empty() { "(空)" } else { speaker },
+            if gender.is_empty() { "(空)" } else { gender }
+        );
+        info!(
+            "   📋 可用角色: {:?}",
+            self.gsv_characters.keys().collect::<Vec<_>>()
+        );
+        info!(
+            "   ⚙️ 默认配置: 男性={}, 女性={}, GUI当前={}",
+            if self.default_male_character.is_empty() {
+                "(未设置)"
+            } else {
+                &self.default_male_character
+            },
+            if self.default_female_character.is_empty() {
+                "(未设置)"
+            } else {
+                &self.default_female_character
+            },
+            if self.current_gsv_character.is_empty() {
+                "(未设置)"
+            } else {
+                &self.current_gsv_character
+            }
+        );
 
         let character_aliases: HashMap<&str, &str> = [
             ("katixia", "卡提希娅"),
             ("卡提", "卡提希娅"),
             ("yuno", "尤诺"),
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
 
         if !speaker.is_empty() {
             let speaker_lower = speaker.to_lowercase();
@@ -185,7 +219,10 @@ impl GPTSoVITSEngine {
 
             for char_id in self.gsv_characters.keys() {
                 let char_lower = char_id.to_lowercase();
-                if char_lower == speaker_lower || char_lower.contains(&speaker_lower) || speaker_lower.contains(&char_lower) {
+                if char_lower == speaker_lower
+                    || char_lower.contains(&speaker_lower)
+                    || speaker_lower.contains(&char_lower)
+                {
                     info!("🎭 对话角色匹配: {} -> {}", speaker, char_id);
                     return char_id.clone();
                 }
@@ -195,19 +232,29 @@ impl GPTSoVITSEngine {
         if !gender.is_empty() {
             let gender_lower = gender.to_lowercase();
             if gender_lower == "male" && !self.default_male_character.is_empty() {
-                if self.gsv_characters.contains_key(&self.default_male_character) {
+                if self
+                    .gsv_characters
+                    .contains_key(&self.default_male_character)
+                {
                     info!("🎭 使用默认男性角色: {}", self.default_male_character);
                     return self.default_male_character.clone();
                 }
             } else if gender_lower == "female" && !self.default_female_character.is_empty() {
-                if self.gsv_characters.contains_key(&self.default_female_character) {
+                if self
+                    .gsv_characters
+                    .contains_key(&self.default_female_character)
+                {
                     info!("🎭 使用默认女性角色: {}", self.default_female_character);
                     return self.default_female_character.clone();
                 }
             }
         }
 
-        if !self.current_gsv_character.is_empty() && self.gsv_characters.contains_key(&self.current_gsv_character) {
+        if !self.current_gsv_character.is_empty()
+            && self
+                .gsv_characters
+                .contains_key(&self.current_gsv_character)
+        {
             info!("🎭 使用GUI全局默认角色: {}", self.current_gsv_character);
             return self.current_gsv_character.clone();
         }
@@ -275,7 +322,11 @@ impl GPTSoVITSEngine {
             if parts.len() >= 2 {
                 let char_dir = parts[parts.len() - 2];
                 let filename = parts[parts.len() - 1];
-                let prefix = self.server_path_prefix.replace('\\', "/").trim_end_matches('/').to_string();
+                let prefix = self
+                    .server_path_prefix
+                    .replace('\\', "/")
+                    .trim_end_matches('/')
+                    .to_string();
                 format!("{}/{}/{}", prefix, char_dir, filename)
             } else {
                 selected_str.clone()
@@ -284,7 +335,8 @@ impl GPTSoVITSEngine {
             selected_str.clone()
         };
 
-        let prompt_text = selected.file_stem()
+        let prompt_text = selected
+            .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "默认提示".to_string());
 
@@ -327,20 +379,40 @@ impl GPTSoVITSEngine {
             Ok(u) => u,
             Err(_) => return false,
         };
-        let base_url = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or("localhost"));
+        let base_url = format!(
+            "{}://{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or("localhost")
+        );
         let port = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
         let base_url = format!("{}{}", base_url, port);
 
-        info!("🔄 尝试切换模型: GPT={}, SoVITS={}",
-              if gpt_model.is_empty() { "无" } else { gpt_model },
-              if sovits_model.is_empty() { "无" } else { sovits_model });
+        info!(
+            "🔄 尝试切换模型: GPT={}, SoVITS={}",
+            if gpt_model.is_empty() {
+                "无"
+            } else {
+                gpt_model
+            },
+            if sovits_model.is_empty() {
+                "无"
+            } else {
+                sovits_model
+            }
+        );
 
         let mut gpt_success = true;
         let mut sovits_success = true;
 
         if !gpt_model.is_empty() && gpt_model != &self.current_gpt_model {
             let url = format!("{}/set_gpt_weights?weights_path={}", base_url, gpt_model);
-            match self.client.get(&url).timeout(Duration::from_secs(60)).send().await {
+            match self
+                .client
+                .get(&url)
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+            {
                 Ok(resp) if resp.status().is_success() => {
                     self.current_gpt_model = gpt_model.clone();
                     info!("   GPT 模型切换成功");
@@ -357,8 +429,17 @@ impl GPTSoVITSEngine {
         }
 
         if !sovits_model.is_empty() && sovits_model != &self.current_sovits_model {
-            let url = format!("{}/set_sovits_weights?weights_path={}", base_url, sovits_model);
-            match self.client.get(&url).timeout(Duration::from_secs(60)).send().await {
+            let url = format!(
+                "{}/set_sovits_weights?weights_path={}",
+                base_url, sovits_model
+            );
+            match self
+                .client
+                .get(&url)
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+            {
                 Ok(resp) if resp.status().is_success() => {
                     self.current_sovits_model = sovits_model.clone();
                     info!("   SoVITS 模型切换成功");
@@ -410,16 +491,41 @@ impl GPTSoVITSEngine {
         }
 
         info!("🎤 TTS 合成请求:");
-        info!("   📝 文本: {}...", request.text.chars().take(40).collect::<String>());
-        info!("   👤 speaker: {}", if request.speaker.is_empty() { "(空)" } else { &request.speaker });
-        info!("   🚻 gender: {}", if request.gender.is_empty() { "(空)" } else { &request.gender });
+        info!(
+            "   📝 文本: {}...",
+            request.text.chars().take(40).collect::<String>()
+        );
+        info!(
+            "   👤 speaker: {}",
+            if request.speaker.is_empty() {
+                "(空)"
+            } else {
+                &request.speaker
+            }
+        );
+        info!(
+            "   🚻 gender: {}",
+            if request.gender.is_empty() {
+                "(空)"
+            } else {
+                &request.gender
+            }
+        );
         info!("   😊 emotion: {}", request.emotion);
         if let Some(ref vec) = request.emotion_vector {
-            let vec_parts: Vec<String> = vec.iter()
+            let vec_parts: Vec<String> = vec
+                .iter()
                 .filter(|(_, v)| **v > 0.0)
                 .map(|(k, v)| format!("{}={:.2}", k, v))
                 .collect();
-            info!("   🎭 emotion_vector: {}", if vec_parts.is_empty() { "无有效情感".to_string() } else { vec_parts.join(", ") });
+            info!(
+                "   🎭 emotion_vector: {}",
+                if vec_parts.is_empty() {
+                    "无有效情感".to_string()
+                } else {
+                    vec_parts.join(", ")
+                }
+            );
         } else {
             info!("   🎭 emotion_vector: None");
         }
@@ -434,10 +540,14 @@ impl GPTSoVITSEngine {
             self.select_ref_audios_by_emotion_vector(&target_character, emotion_vector)
         } else {
             emotion::select_audio_by_emotion(
-                &target_character, &request.emotion,
-                &self.emotion_audio_cache, &self.gsv_characters,
+                &target_character,
+                &request.emotion,
+                &self.emotion_audio_cache,
+                &self.gsv_characters,
                 &|audio, dir| self.build_audio_path(audio, dir),
-            ).map(|a| vec![a]).unwrap_or_default()
+            )
+            .map(|a| vec![a])
+            .unwrap_or_default()
         };
 
         if ref_audios.is_empty() {
@@ -461,10 +571,17 @@ impl GPTSoVITSEngine {
         let text_segments = self.split_text(request.text.trim(), 40);
 
         if text_segments.len() > 1 {
-            info!("🎵 GSV TTS: 长文本切分为 {} 段 | 角色={}", text_segments.len(), target_character);
+            info!(
+                "🎵 GSV TTS: 长文本切分为 {} 段 | 角色={}",
+                text_segments.len(),
+                target_character
+            );
         } else {
             let preview: String = request.text.chars().take(30).collect();
-            info!("🎵 GSV TTS: {}... | 角色={} | 情感={}", preview, target_character, request.emotion);
+            info!(
+                "🎵 GSV TTS: {}... | 角色={} | 情感={}",
+                preview, target_character, request.emotion
+            );
         }
 
         let is_v2_api = self.api_url.trim_end_matches('/').ends_with("/tts");
@@ -473,18 +590,34 @@ impl GPTSoVITSEngine {
         for (i, segment_text) in text_segments.iter().enumerate() {
             if text_segments.len() > 1 {
                 let preview: String = segment_text.chars().take(25).collect();
-                info!("   📝 段落 {}/{}: {}...", i + 1, text_segments.len(), preview);
+                info!(
+                    "   📝 段落 {}/{}: {}...",
+                    i + 1,
+                    text_segments.len(),
+                    preview
+                );
             }
 
             let payload = synthesizer::build_payload(
-                segment_text, primary_audio, is_v2_api,
-                self.top_k, self.top_p, self.temperature, request.speed,
+                segment_text,
+                primary_audio,
+                is_v2_api,
+                self.top_k,
+                self.top_p,
+                self.temperature,
+                request.speed,
             );
 
             if let Some(data) = synthesizer::send_synthesis_request(
-                &self.client, &self.api_url, &payload,
-                self.timeout, i, text_segments.len(),
-            ).await {
+                &self.client,
+                &self.api_url,
+                &payload,
+                self.timeout,
+                i,
+                text_segments.len(),
+            )
+            .await
+            {
                 audio_segments.push(data);
             }
         }
@@ -504,7 +637,11 @@ impl GPTSoVITSEngine {
             }
         } else {
             let total_bytes: usize = audio_segments.iter().map(|s| s.len()).sum();
-            info!("GSV TTS 合成成功: {} 段, 共 {} 字节", audio_segments.len(), total_bytes);
+            info!(
+                "GSV TTS 合成成功: {} 段, 共 {} 字节",
+                audio_segments.len(),
+                total_bytes
+            );
             TtsResult {
                 success: true,
                 audio_data: None,
@@ -529,9 +666,26 @@ impl GPTSoVITSEngine {
         }
 
         info!("🎤 TTS 流式合成请求:");
-        info!("   📝 文本: {}...", request.text.chars().take(40).collect::<String>());
-        info!("   👤 speaker: {}", if request.speaker.is_empty() { "(空)" } else { &request.speaker });
-        info!("   🚻 gender: {}", if request.gender.is_empty() { "(空)" } else { &request.gender });
+        info!(
+            "   📝 文本: {}...",
+            request.text.chars().take(40).collect::<String>()
+        );
+        info!(
+            "   👤 speaker: {}",
+            if request.speaker.is_empty() {
+                "(空)"
+            } else {
+                &request.speaker
+            }
+        );
+        info!(
+            "   🚻 gender: {}",
+            if request.gender.is_empty() {
+                "(空)"
+            } else {
+                &request.gender
+            }
+        );
 
         let target_character = self.resolve_target_character(&request.speaker, &request.gender);
 
@@ -543,10 +697,14 @@ impl GPTSoVITSEngine {
             self.select_ref_audios_by_emotion_vector(&target_character, emotion_vector)
         } else {
             emotion::select_audio_by_emotion(
-                &target_character, &request.emotion,
-                &self.emotion_audio_cache, &self.gsv_characters,
+                &target_character,
+                &request.emotion,
+                &self.emotion_audio_cache,
+                &self.gsv_characters,
                 &|audio, dir| self.build_audio_path(audio, dir),
-            ).map(|a| vec![a]).unwrap_or_default()
+            )
+            .map(|a| vec![a])
+            .unwrap_or_default()
         };
 
         if ref_audios.is_empty() {
@@ -569,24 +727,43 @@ impl GPTSoVITSEngine {
         let text_segments = self.split_text(request.text.trim(), 40);
         let total_segments = text_segments.len();
 
-        info!("🎵 GSV TTS 流式合成: {} 段 | 角色={}", total_segments, target_character);
+        info!(
+            "🎵 GSV TTS 流式合成: {} 段 | 角色={}",
+            total_segments, target_character
+        );
 
         let is_v2_api = self.api_url.trim_end_matches('/').ends_with("/tts");
         let mut success_count = 0;
 
         for (i, segment_text) in text_segments.iter().enumerate() {
             let preview: String = segment_text.chars().take(25).collect();
-            info!("   📝 合成段落 {}/{}: {}...", i + 1, total_segments, preview);
+            info!(
+                "   📝 合成段落 {}/{}: {}...",
+                i + 1,
+                total_segments,
+                preview
+            );
 
             let payload = synthesizer::build_payload(
-                segment_text, primary_audio, is_v2_api,
-                self.top_k, self.top_p, self.temperature, request.speed,
+                segment_text,
+                primary_audio,
+                is_v2_api,
+                self.top_k,
+                self.top_p,
+                self.temperature,
+                request.speed,
             );
 
             if let Some(audio_data) = synthesizer::send_synthesis_request(
-                &self.client, &self.api_url, &payload,
-                self.timeout, i, total_segments,
-            ).await {
+                &self.client,
+                &self.api_url,
+                &payload,
+                self.timeout,
+                i,
+                total_segments,
+            )
+            .await
+            {
                 let data_len = audio_data.len();
                 let is_last = i == total_segments - 1;
 
@@ -599,7 +776,12 @@ impl GPTSoVITSEngine {
                 };
 
                 if tx.send(segment_audio).await.is_ok() {
-                    info!("   ✅ 段落 {}/{} 已发送: {} 字节", i + 1, total_segments, data_len);
+                    info!(
+                        "   ✅ 段落 {}/{} 已发送: {} 字节",
+                        i + 1,
+                        total_segments,
+                        data_len
+                    );
                     success_count += 1;
                 } else {
                     error!("   ❌ 段落 {} 发送失败: channel 已关闭", i + 1);
@@ -610,7 +792,10 @@ impl GPTSoVITSEngine {
         if success_count == 0 {
             synthesizer::fail_result("所有段落合成失败")
         } else {
-            info!("GSV TTS 流式合成完成: {}/{} 段成功", success_count, total_segments);
+            info!(
+                "GSV TTS 流式合成完成: {}/{} 段成功",
+                success_count, total_segments
+            );
             TtsResult {
                 success: true,
                 speaker_used: target_character,
@@ -621,12 +806,19 @@ impl GPTSoVITSEngine {
     }
 
     pub async fn test_connection(&self) -> bool {
-        info!("开始测试 GSV API 连接，当前 URL: {}", self.api_url);
+        Self::test_connection_url(&self.api_url).await
+    }
 
-        let parsed: Url = match Url::parse(&self.api_url) {
+    /// 测试指定地址，不修改引擎当前配置。
+    ///
+    /// API 处理器可在释放引擎互斥锁后调用，避免连通性探测阻塞语音合成。
+    pub async fn test_connection_url(api_url: &str) -> bool {
+        info!("开始测试 GSV API 连接，目标 URL: {}", api_url);
+
+        let parsed: Url = match Url::parse(api_url) {
             Ok(u) => u,
             Err(e) => {
-                warn!("GSV API URL 解析失败: {} - {}", self.api_url, e);
+                warn!("GSV API URL 解析失败: {} - {}", api_url, e);
                 return false;
             }
         };
@@ -634,13 +826,17 @@ impl GPTSoVITSEngine {
         let host = match parsed.host_str() {
             Some(h) => h.to_string(),
             None => {
-                warn!("GSV API URL 缺少主机名: {}", self.api_url);
+                warn!("GSV API URL 缺少主机名: {}", api_url);
                 return false;
             }
         };
 
-        let port = parsed.port().unwrap_or(80);
-        let addr = format!("{}:{}", host, port);
+        let port = parsed.port_or_known_default().unwrap_or(80);
+        let addr = if host.contains(':') {
+            format!("[{}]:{}", host, port)
+        } else {
+            format!("{}:{}", host, port)
+        };
 
         info!("测试 GSV API TCP 连接: {}", addr);
 
@@ -649,8 +845,10 @@ impl GPTSoVITSEngine {
 
             match tokio::time::timeout(
                 Duration::from_secs(5),
-                tokio::net::TcpStream::connect(&addr)
-            ).await {
+                tokio::net::TcpStream::connect(&addr),
+            )
+            .await
+            {
                 Ok(Ok(_stream)) => {
                     info!("GSV API 端口可达: {}", addr);
                     return true;

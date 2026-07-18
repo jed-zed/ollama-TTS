@@ -79,9 +79,26 @@ class ApiClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        let errorDetail = errorText || response.statusText;
+        if (errorText) {
+          try {
+            const errorJson = JSON.parse(errorText) as {
+              error?: string;
+              message?: string;
+              data?: { error?: string; message?: string };
+            };
+            errorDetail = errorJson.error
+              ?? errorJson.message
+              ?? errorJson.data?.error
+              ?? errorJson.data?.message
+              ?? errorDetail;
+          } catch {
+            // 非 JSON 错误体保留原文。
+          }
+        }
         return {
           success: false,
-          error: `HTTP ${response.status}: ${errorText || response.statusText}`,
+          error: `HTTP ${response.status}: ${errorDetail}`,
         };
       }
 
@@ -183,7 +200,24 @@ class ApiClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        onError?.(`HTTP ${response.status}: ${errorText}`);
+        let errorDetail = errorText || response.statusText;
+        if (errorText) {
+          try {
+            const errorJson = JSON.parse(errorText) as {
+              error?: string;
+              message?: string;
+              data?: { error?: string; message?: string };
+            };
+            errorDetail = errorJson.error
+              ?? errorJson.message
+              ?? errorJson.data?.error
+              ?? errorJson.data?.message
+              ?? errorDetail;
+          } catch {
+            // 非 JSON 错误体保留原文。
+          }
+        }
+        onError?.(`HTTP ${response.status}: ${errorDetail}`);
         return;
       }
 
@@ -195,6 +229,51 @@ class ApiClient {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let dataLines: string[] = [];
+      let completed = false;
+
+      const complete = () => {
+        if (!completed) {
+          completed = true;
+          onComplete?.();
+        }
+      };
+
+      const dispatchEvent = (): boolean => {
+        if (dataLines.length === 0) return false;
+
+        const payload = dataLines.join('\n');
+        dataLines = [];
+
+        if (payload.trim() === '[DONE]') {
+          complete();
+          return true;
+        }
+
+        try {
+          onChunk(JSON.parse(payload));
+        } catch {
+          onError?.('流事件解析失败');
+        }
+
+        return false;
+      };
+
+      const processLine = (rawLine: string): boolean => {
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+
+        // 空行结束一个 SSE 事件；注释行只用于传输层保活。
+        if (line === '') return dispatchEvent();
+        if (line.startsWith(':')) return false;
+
+        const colonIndex = line.indexOf(':');
+        const field = colonIndex >= 0 ? line.slice(0, colonIndex) : line;
+        let value = colonIndex >= 0 ? line.slice(colonIndex + 1) : '';
+        if (value.startsWith(' ')) value = value.slice(1);
+
+        if (field === 'data') dataLines.push(value);
+        return false;
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -205,23 +284,20 @@ class ApiClient {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonStr = line.slice(6).trim();
-            if (jsonStr === '[DONE]') {
-              onComplete?.();
-              return;
-            }
-            try {
-              const data = JSON.parse(jsonStr);
-              onChunk(data);
-            } catch {
-              // 忽略解析错误
-            }
+          if (processLine(line)) {
+            await reader.cancel();
+            return;
           }
         }
       }
 
-      onComplete?.();
+      buffer += decoder.decode();
+      if (buffer && processLine(buffer)) {
+        complete();
+        return;
+      }
+      dispatchEvent();
+      complete();
     } catch (error) {
       const message = error instanceof Error ? error.message : '流式请求失败';
       onError?.(message);

@@ -108,7 +108,7 @@ function generateModelEndpoints(apiUrl: string): string[] {
   return [...new Set(endpoints.filter(Boolean))];
 }
 
-async function fetchModels(apiUrl: string, apiKey: string): Promise<ModelInfo[]> {
+async function fetchModels(apiUrl: string, apiKey: string, signal: AbortSignal): Promise<ModelInfo[]> {
   if (!apiUrl) return [];
   
   const headers: HeadersInit = {
@@ -126,7 +126,7 @@ async function fetchModels(apiUrl: string, apiKey: string): Promise<ModelInfo[]>
       const response = await fetch(endpoint, {
         method: 'GET',
         headers,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]),
       });
       
       if (!response.ok) continue;
@@ -151,6 +151,7 @@ async function fetchModels(apiUrl: string, apiKey: string): Promise<ModelInfo[]>
         return data.data.map(normalizeModel);
       }
     } catch (error) {
+      if (signal.aborted) throw error;
       console.debug('fetchModels: Endpoint failed', { endpoint, error });
       continue;
     }
@@ -176,6 +177,7 @@ export function ModelCombobox({
   const [error, setError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState(value);
   const fetchIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   const debouncedApiUrl = useDebounce(apiUrl, DEBOUNCE_DELAY_MS);
   const debouncedApiKey = useDebounce(apiKey, DEBOUNCE_DELAY_MS);
@@ -185,18 +187,29 @@ export function ModelCombobox({
   }, [value]);
   
   const loadModels = useCallback(async () => {
-    if (!debouncedApiUrl) {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+
+    if (disabled || !debouncedApiUrl) {
+      fetchIdRef.current += 1;
       setModels([]);
+      setIsLoading(false);
       setError(null);
       return;
     }
     
     const currentFetchId = ++fetchIdRef.current;
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     setIsLoading(true);
     setError(null);
     
     try {
-      const fetchedModels = await fetchModels(debouncedApiUrl, debouncedApiKey);
+      const fetchedModels = await fetchModels(
+        debouncedApiUrl,
+        debouncedApiKey,
+        abortController.signal,
+      );
       
       if (currentFetchId !== fetchIdRef.current) return;
       
@@ -210,14 +223,18 @@ export function ModelCombobox({
       setModels([]);
       setError('获取失败');
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       if (currentFetchId === fetchIdRef.current) {
         setIsLoading(false);
       }
     }
-  }, [debouncedApiUrl, debouncedApiKey]);
+  }, [debouncedApiUrl, debouncedApiKey, disabled]);
   
   useEffect(() => {
     loadModels();
+    return () => abortControllerRef.current?.abort();
   }, [loadModels]);
   
   const handleSelect = useCallback((selectedValue: string) => {

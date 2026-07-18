@@ -1,23 +1,22 @@
 //! 代理服务器管理器
-//! 
+//!
 //! 提供 Ollama 代理服务器的启动、停止和状态管理功能。
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::Router;
 use parking_lot::RwLock;
 use tokio::sync::{watch, Mutex};
-use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
 use crate::server::proxy_api::{self, ProxyAppState};
-use crate::services::config_store::ConfigStore;
-use crate::services::sse_broadcaster::{SseBroadcaster, LogEvent};
-use crate::services::tts_gsv::GPTSoVITSEngine;
+use crate::server::trusted_local_cors_layer;
 use crate::services::audio_player::TTSManager;
-use crate::services::antigravity_bridge::AntigravityBridge;
+use crate::services::config_store::ConfigStore;
+use crate::services::sse_broadcaster::{LogEvent, SseBroadcaster};
+use crate::services::tts_gsv::GPTSoVITSEngine;
 
 /// 代理服务器状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +40,7 @@ struct ProxyManagerInner {
 }
 
 /// 代理服务器管理器
-/// 
+///
 /// 管理 Ollama 兼容代理服务器（11434端口）的生命周期
 #[derive(Clone)]
 pub struct ProxyServerManager {
@@ -66,7 +65,7 @@ impl ProxyServerManager {
             tts_manager: None,
         }
     }
-    
+
     /// 设置 TTS 服务
     pub fn set_tts_services(
         &mut self,
@@ -77,7 +76,7 @@ impl ProxyServerManager {
         self.tts_manager = Some(tts_manager);
         info!("TTS 服务已注入到代理管理器");
     }
-    
+
     fn broadcast_log(&self, level: &str, message: &str) {
         let event = LogEvent {
             id: None,
@@ -141,11 +140,8 @@ impl ProxyServerManager {
             broadcaster: self.broadcaster.clone(),
             gsv_engine: self.gsv_engine.clone(),
             tts_manager: self.tts_manager.clone(),
-            bridge: Arc::new(AntigravityBridge::with_concurrency(
-                config.antigravity_max_concurrent.max(1) as usize
-            )),
         };
-        
+
         if self.gsv_engine.is_some() && self.tts_manager.is_some() {
             info!("代理服务器已启用 TTS 功能");
             self.broadcast_log("INFO", "代理服务器已启用 TTS 功能");
@@ -154,14 +150,9 @@ impl ProxyServerManager {
             self.broadcast_log("WARN", "代理服务器未配置 TTS 服务，TTS 功能将不可用");
         }
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
         let app: Router = proxy_api::create_router(state)
             .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
-            .layer(cors);
+            .layer(trusted_local_cors_layer());
 
         // 根据配置决定绑定地址：局域网开放 → 0.0.0.0，否则 → 127.0.0.1
         let bind_ip: [u8; 4] = if config.lan_access_enabled {
@@ -184,7 +175,10 @@ impl ProxyServerManager {
         };
 
         info!("Ollama proxy server listening on http://{}", addr);
-        self.broadcast_log("SUCCESS", &format!("Ollama 代理服务器已启动: http://{}", addr));
+        self.broadcast_log(
+            "SUCCESS",
+            &format!("Ollama 代理服务器已启动: http://{}", addr),
+        );
 
         {
             let mut inner = self.inner.write();
@@ -205,8 +199,7 @@ impl ProxyServerManager {
                 info!("Proxy server received shutdown signal");
             };
 
-            let server = axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal);
+            let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal);
 
             if let Err(e) = server.await {
                 error!("Proxy server error: {}", e);

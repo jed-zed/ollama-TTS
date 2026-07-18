@@ -219,7 +219,7 @@ impl StreamingTTSParser {
                             // 如果在对话中，检查是否是对话结束
                             if self.in_dialogue {
                                 let expected_right = self.quote_pairs.get(&self.quote_char.unwrap_or('"')).unwrap_or(&'"');
-                                if '"' == *expected_right || ('"' == '"' && self.quote_char == Some('"')) {
+                                if '"' == *expected_right || self.quote_char == Some('"') {
                                     self.emit_dialogue();
                                     self.in_dialogue = false;
                                     self.quote_char = None;

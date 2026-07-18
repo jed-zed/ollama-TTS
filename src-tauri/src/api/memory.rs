@@ -2,17 +2,15 @@
 //!
 //! 提供对话历史压缩的状态查询和操作功能。
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use tracing::{info, error};
+use tracing::{error, info};
 
-use crate::server::AppState;
 use crate::models::config::{HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT};
-use crate::services::history_compressor::{CompressionStatus, CompressionResult, CompressionResultStatus};
+use crate::server::AppState;
+use crate::services::history_compressor::{
+    CompressionResult, CompressionResultStatus, CompressionStatus,
+};
 
 /// 通用 API 响应
 #[derive(Debug, Serialize)]
@@ -71,7 +69,10 @@ pub async fn get_memory_status(
     let total = files.len();
     let needs_compression_count = files.iter().filter(|f| f.needs_compression).count();
 
-    info!("获取压缩状态: {} 个文件, {} 个需要压缩", total, needs_compression_count);
+    info!(
+        "获取压缩状态: {} 个文件, {} 个需要压缩",
+        total, needs_compression_count
+    );
 
     Json(ApiResponse::success(files))
 }
@@ -95,8 +96,8 @@ pub async fn compress_file(
     State(state): State<AppState>,
     Json(request): Json<CompressRequest>,
 ) -> Result<Json<ApiResponse<CompressResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
-    let compressor = state.history_compressor.read().await;
-    
+    let compressor = state.history_compressor.read().await.clone();
+
     let file_path_str = if let Some(fp) = &request.file_path {
         fp.clone()
     } else if let Some(char_id) = &request.character_id {
@@ -117,7 +118,7 @@ pub async fn compress_file(
             Json(ApiResponse::error("必须提供 file_path 或 character_id")),
         ));
     };
-    
+
     let file_path = std::path::Path::new(&file_path_str);
 
     if !file_path.exists() {
@@ -129,12 +130,18 @@ pub async fn compress_file(
     }
 
     info!("开始压缩文件: {}", file_path_str);
-    let result = compressor.check_and_compress_file(file_path, request.force).await;
+    let result = compressor
+        .check_and_compress_file(file_path, request.force)
+        .await;
 
     let response = CompressResponse {
         success: result.success,
         compressed_count: if result.success { 1 } else { 0 },
-        summaries: if result.success { Some(vec![result.message.clone()]) } else { None },
+        summaries: if result.success {
+            Some(vec![result.message.clone()])
+        } else {
+            None
+        },
         message: Some(result.message.clone()),
     };
 
@@ -172,18 +179,31 @@ pub async fn compress_all(
     State(state): State<AppState>,
     Json(request): Json<CompressAllRequest>,
 ) -> Json<ApiResponse<CompressResponse>> {
-    let compressor = state.history_compressor.read().await;
+    let compressor = state.history_compressor.read().await.clone();
 
     info!("开始批量压缩, force={}", request.force);
     let results = compressor.scan_and_compress_all(request.force).await;
 
     let total = results.len();
-    let success_count = results.iter().filter(|r| r.status == CompressionResultStatus::Success).count();
-    let skipped_count = results.iter().filter(|r| r.status == CompressionResultStatus::Skipped).count();
-    let ignored_count = results.iter().filter(|r| r.status == CompressionResultStatus::Ignored).count();
-    let failed_count = results.iter().filter(|r| r.status == CompressionResultStatus::Failed).count();
-    
-    let summaries: Vec<String> = results.iter()
+    let success_count = results
+        .iter()
+        .filter(|r| r.status == CompressionResultStatus::Success)
+        .count();
+    let skipped_count = results
+        .iter()
+        .filter(|r| r.status == CompressionResultStatus::Skipped)
+        .count();
+    let ignored_count = results
+        .iter()
+        .filter(|r| r.status == CompressionResultStatus::Ignored)
+        .count();
+    let failed_count = results
+        .iter()
+        .filter(|r| r.status == CompressionResultStatus::Failed)
+        .count();
+
+    let summaries: Vec<String> = results
+        .iter()
         .filter(|r| r.status == CompressionResultStatus::Success)
         .map(|r| r.message.clone())
         .collect();
@@ -196,7 +216,11 @@ pub async fn compress_all(
     Json(ApiResponse::success(CompressResponse {
         success: success_count > 0 || failed_count == 0,
         compressed_count: success_count as i32,
-        summaries: if summaries.is_empty() { None } else { Some(summaries) },
+        summaries: if summaries.is_empty() {
+            None
+        } else {
+            Some(summaries)
+        },
         message: Some(format!(
             "压缩完成: {} 成功, {} 跳过, {} 忽略, {} 失败",
             success_count, skipped_count, ignored_count, failed_count
@@ -233,58 +257,62 @@ pub async fn update_memory_config(
     State(state): State<AppState>,
     Json(request): Json<UpdateMemoryConfigRequest>,
 ) -> Result<Json<ApiResponse<HistoryCompressionConfig>>, (StatusCode, Json<ApiResponse<()>>)> {
-    let mut config = state.config_store.get();
-
-    if let Some(value) = request.enabled.or(request.auto_compress) {
-        config.history_compression.enabled = value;
+    if request.max_messages.is_some_and(|value| value <= 0) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("max_messages 必须大于 0")),
+        ));
     }
-    if let Some(save_data_path) = request.save_data_path {
-        config.history_compression.save_data_path = save_data_path;
+    if request.compress_count.is_some_and(|value| value <= 0) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("compress_count 必须大于 0")),
+        ));
     }
-    if let Some(max_messages) = request.max_messages {
-        if max_messages <= 0 {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error("max_messages 必须大于 0")),
-            ));
-        }
-        config.history_compression.max_messages = max_messages;
-    }
-    if let Some(compress_count) = request.compress_count {
-        if compress_count <= 0 {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error("compress_count 必须大于 0")),
-            ));
-        }
-        config.history_compression.compress_count = compress_count;
-    }
-    if let Some(check_interval) = request.check_interval {
-        if check_interval <= 0 {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error("check_interval 必须大于 0")),
-            ));
-        }
-        config.history_compression.check_interval = check_interval;
-    }
-    if let Some(backup_before_compress) = request.backup_before_compress {
-        config.history_compression.backup_before_compress = backup_before_compress;
-    }
-    if let Some(backup_dir) = request.backup_dir {
-        config.history_compression.backup_dir = backup_dir;
-    }
-    if let Some(custom_prompt) = request.custom_prompt {
-        config.history_compression.custom_prompt = custom_prompt;
+    if request.check_interval.is_some_and(|value| value <= 0) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("check_interval 必须大于 0")),
+        ));
     }
 
-    match state.config_store.update(config.clone()) {
-        Ok(()) => {
+    let update_result = state.config_store.modify(move |config| {
+        if let Some(value) = request.enabled.or(request.auto_compress) {
+            config.history_compression.enabled = value;
+        }
+        if let Some(save_data_path) = request.save_data_path {
+            config.history_compression.save_data_path = save_data_path;
+        }
+        if let Some(max_messages) = request.max_messages {
+            config.history_compression.max_messages = max_messages;
+        }
+        if let Some(compress_count) = request.compress_count {
+            config.history_compression.compress_count = compress_count;
+        }
+        if let Some(check_interval) = request.check_interval {
+            config.history_compression.check_interval = check_interval;
+        }
+        if let Some(backup_before_compress) = request.backup_before_compress {
+            config.history_compression.backup_before_compress = backup_before_compress;
+        }
+        if let Some(backup_dir) = request.backup_dir {
+            config.history_compression.backup_dir = backup_dir;
+        }
+        if let Some(custom_prompt) = request.custom_prompt {
+            config.history_compression.custom_prompt = custom_prompt;
+        }
+    });
+
+    match update_result {
+        Ok(_) => {
             let mut compressor = state.history_compressor.write().await;
-            compressor.update_config(config.history_compression.clone());
+            let latest_config = state.config_store.get();
+            compressor.update_config(latest_config.history_compression.clone());
 
             info!("更新压缩配置成功");
-            Ok(Json(ApiResponse::success(config.history_compression)))
+            Ok(Json(ApiResponse::success(
+                latest_config.history_compression,
+            )))
         }
         Err(e) => {
             error!("更新压缩配置失败: {}", e);
@@ -297,11 +325,9 @@ pub async fn update_memory_config(
 }
 
 /// POST /api/memory/auto-check - 触发自动压缩检查
-pub async fn trigger_auto_check(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<String>> {
-    let compressor = state.history_compressor.read().await;
-    
+pub async fn trigger_auto_check(State(state): State<AppState>) -> Json<ApiResponse<String>> {
+    let compressor = state.history_compressor.read().await.clone();
+
     info!("触发自动压缩检查");
     compressor.auto_compress_check().await;
 
@@ -323,11 +349,10 @@ pub struct ScanResponse {
 }
 
 /// POST /api/memory/scan - 扫描可压缩的文件
-pub async fn scan_files(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<ScanResponse>> {
+pub async fn scan_files(State(state): State<AppState>) -> Json<ApiResponse<ScanResponse>> {
     let compressor = state.history_compressor.read().await;
-    let files: Vec<String> = compressor.scan_json_files()
+    let files: Vec<String> = compressor
+        .scan_json_files()
         .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect();
@@ -372,17 +397,19 @@ pub async fn save_prompt_template(
     State(state): State<AppState>,
     Json(request): Json<PromptTemplateRequest>,
 ) -> Result<Json<ApiResponse<PromptTemplateResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
-    let mut config = state.config_store.get();
-    config.history_compression.custom_prompt = request.template.clone();
-
-    match state.config_store.update(config.clone()) {
-        Ok(()) => {
+    let template = request.template;
+    match state.config_store.modify(move |config| {
+        config.history_compression.custom_prompt = template;
+    }) {
+        Ok(_) => {
             let mut compressor = state.history_compressor.write().await;
-            compressor.update_config(config.history_compression);
+            let latest_config = state.config_store.get();
+            let response_template = latest_config.history_compression.custom_prompt.clone();
+            compressor.update_config(latest_config.history_compression);
 
             info!("保存压缩提示词模板成功");
             Ok(Json(ApiResponse::success(PromptTemplateResponse {
-                template: request.template,
+                template: response_template,
             })))
         }
         Err(e) => {
@@ -399,13 +426,13 @@ pub async fn save_prompt_template(
 pub async fn reset_prompt_template(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<PromptTemplateResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
-    let mut config = state.config_store.get();
-    config.history_compression.custom_prompt = String::new();
-
-    match state.config_store.update(config.clone()) {
-        Ok(()) => {
+    match state.config_store.modify(|config| {
+        config.history_compression.custom_prompt = String::new();
+    }) {
+        Ok(_) => {
             let mut compressor = state.history_compressor.write().await;
-            compressor.update_config(config.history_compression);
+            let latest_config = state.config_store.get();
+            compressor.update_config(latest_config.history_compression);
 
             info!("重置压缩提示词模板为默认值");
             Ok(Json(ApiResponse::success(PromptTemplateResponse {

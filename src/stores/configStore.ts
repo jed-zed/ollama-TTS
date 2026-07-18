@@ -15,9 +15,23 @@ import { OLLAMA_DEFAULT_URL, GSV_DEFAULT_TTS_URL, CONFIG_DEBOUNCE_MS } from '@/l
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingUpdates: Map<string, unknown> = new Map();
-const CONFIG_STORAGE_KEY = 'ollama-tts-config';
-const CONFIG_VERSION_KEY = 'ollama-tts-config-version';
-const BROADCAST_CHANNEL_NAME = 'ollama-tts-config-sync';
+let pendingUpdatesBase: Config | null = null;
+let configMutationSequence = 0;
+let configMutationsInFlight = 0;
+let configLoadSequence = 0;
+let configMutationQueue: Promise<void> = Promise.resolve();
+let mutationCycleBase: Config | null = null;
+let mutationCycleServerConfig: Config | null = null;
+const CONFIG_STORAGE_KEY = 'ollama-tts-config-v2';
+const CONFIG_VERSION_KEY = 'ollama-tts-config-version-v2';
+const BROADCAST_CHANNEL_NAME = 'ollama-tts-config-sync-v2';
+
+try {
+  localStorage.removeItem('ollama-tts-config');
+  localStorage.removeItem('ollama-tts-config-version');
+} catch (e) {
+  console.warn('[Config] Failed to clean legacy config cache:', e);
+}
 
 let configChannel: BroadcastChannel | null = null;
 
@@ -60,6 +74,20 @@ const saveConfigToStorage = (config: Config) => {
   }
 };
 
+const mergePendingUpdates = (config: Config): Config => {
+  const merged = { ...config } as Record<string, unknown>;
+  pendingUpdates.forEach((value, key) => {
+    merged[key] = value;
+  });
+  return merged as unknown as Config;
+};
+
+const enqueueConfigMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+  const result = configMutationQueue.then(operation, operation);
+  configMutationQueue = result.then(() => undefined, () => undefined);
+  return result;
+};
+
 interface ConfigState {
   // 配置数据
   config: Config | null;
@@ -68,6 +96,7 @@ interface ConfigState {
 
   // 操作
   loadConfig: () => Promise<void>;
+  applyAuthoritativeConfig: (config: Config) => void;
   updateConfig: <K extends keyof Config>(key: K, value: Config[K]) => Promise<void>;
   updateConfigBatch: (updates: Partial<Config>) => Promise<void>;
 
@@ -85,6 +114,7 @@ interface ConfigState {
 // 默认配置
 const defaultConfig: Config = {
   api_url: OLLAMA_DEFAULT_URL,
+  api_target_confirmation_required: false,
   api_key: '',
   model_name: 'qwen2.5:7b',
   current_api_preset: 'local',
@@ -157,17 +187,6 @@ const defaultConfig: Config = {
 
   lan_access_enabled: false,
 
-  antigravity_bridge_enabled: false,
-  antigravity_include_thinking: false,
-  antigravity_stream_enabled: false,
-  antigravity_bridge_model_id: 'MODEL_PLACEHOLDER_M18',
-  antigravity_max_concurrent: 3,
-  antigravity_stream_char_delay: 20,
-  antigravity_window_title: 'Antigravity',
-  antigravity_timeout_ms: 60000,
-  antigravity_max_retries: 0,
-  antigravity_pending_submit_fallback_enabled: false,
-
   fallback_model_enabled: false,
   fallback_preset_id: '',
   fallback_trigger_threshold: 100,
@@ -192,18 +211,34 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
 
   loadConfig: async () => {
     const storedConfig = getStoredConfig();
+    const loadId = ++configLoadSequence;
+    const mutationSequence = configMutationSequence;
 
-    if (storedConfig) {
-      set({ config: storedConfig, isLoading: false });
-    } else {
+    if (!storedConfig) {
       set({ isLoading: true, error: null });
     }
 
-    const response = await configService.getConfig();
+    // Store 初始化时已经读取过本地缓存；这里保留当前内存态，避免旧缓存
+    // 在配置 mutation 或 IPC 确认期间短暂覆盖更晚的状态。
+    const response = await configService.getConfig({ forceFresh: true });
+
+    if (
+      loadId !== configLoadSequence
+      || mutationSequence !== configMutationSequence
+    ) {
+      if (loadId === configLoadSequence) {
+        set({ isLoading: false });
+      }
+      return;
+    }
 
     if (response.success && response.data) {
       set({ config: response.data, isLoading: false });
       saveConfigToStorage(response.data);
+      if (configMutationsInFlight === 0 && pendingUpdates.size === 0) {
+        mutationCycleBase = null;
+        mutationCycleServerConfig = null;
+      }
     } else if (!storedConfig) {
       set({
         config: defaultConfig,
@@ -215,9 +250,30 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     }
   },
 
+  applyAuthoritativeConfig: (config) => {
+    // IPC 返回的是已经持久化的后端快照。推进两个代际，阻止此前的 GET
+    // 或 HTTP mutation 响应在稍后覆盖它。
+    configMutationSequence += 1;
+    configLoadSequence += 1;
+    mutationCycleServerConfig = config;
+    set({ config, isLoading: false, error: null });
+    saveConfigToStorage(config);
+    broadcastConfigUpdate(config);
+
+    if (configMutationsInFlight === 0 && pendingUpdates.size === 0) {
+      mutationCycleBase = null;
+      mutationCycleServerConfig = null;
+    }
+  },
+
   updateConfig: async (key, value) => {
     const currentConfig = get().config;
     if (!currentConfig) return;
+
+    const mutationId = ++configMutationSequence;
+    if (!mutationCycleBase) {
+      mutationCycleBase = currentConfig;
+    }
 
     const newConfig = { ...currentConfig, [key]: value };
     set({ config: newConfig });
@@ -230,21 +286,74 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     }
 
     pendingUpdates.set(key as string, value);
+    if (!pendingUpdatesBase) {
+      pendingUpdatesBase = currentConfig;
+    }
 
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
 
     debounceTimer = setTimeout(async () => {
+      debounceTimer = null;
+      if (pendingUpdates.size === 0) return;
+
       const updates: Partial<Config> = {};
       pendingUpdates.forEach((v, k) => {
         (updates as Record<string, unknown>)[k] = v;
       });
       pendingUpdates.clear();
+      const rollbackConfig = pendingUpdatesBase;
+      pendingUpdatesBase = null;
 
-      const response = await configService.updateConfig(updates);
-      if (!response.success) {
-        set({ error: response.error });
+      configMutationsInFlight += 1;
+      try {
+        const response = await enqueueConfigMutation(
+          () => configService.updateConfig(updates),
+        );
+        if (response.success && response.data) {
+          mutationCycleServerConfig = response.data;
+        }
+        if (mutationId === configMutationSequence) {
+          if (response.success && response.data) {
+            const nextConfig = mergePendingUpdates(response.data);
+            set({ config: nextConfig, error: null });
+            saveConfigToStorage(nextConfig);
+            broadcastConfigUpdate(nextConfig);
+          } else if (rollbackConfig) {
+            const nextConfig = mergePendingUpdates(rollbackConfig);
+            set({ config: nextConfig, error: response.error });
+            saveConfigToStorage(nextConfig);
+            broadcastConfigUpdate(nextConfig);
+          } else {
+            set({ error: response.error });
+          }
+        }
+      } finally {
+        configMutationsInFlight -= 1;
+        if (configMutationsInFlight === 0 && pendingUpdates.size === 0) {
+          const syncSequence = configMutationSequence;
+          const syncLoadId = ++configLoadSequence;
+          const authoritative = await configService.getConfig({ forceFresh: true });
+          if (syncSequence === configMutationSequence && syncLoadId === configLoadSequence) {
+            if (authoritative.success && authoritative.data) {
+              set({ config: authoritative.data, error: null });
+              saveConfigToStorage(authoritative.data);
+              broadcastConfigUpdate(authoritative.data);
+            } else {
+              const fallback = mutationCycleServerConfig ?? mutationCycleBase;
+              if (fallback) {
+                set({ config: fallback, error: authoritative.error });
+                saveConfigToStorage(fallback);
+                broadcastConfigUpdate(fallback);
+              } else {
+                set({ error: authoritative.error });
+              }
+            }
+            mutationCycleBase = null;
+            mutationCycleServerConfig = null;
+          }
+        }
       }
     }, CONFIG_DEBOUNCE_MS);
   },
@@ -253,14 +362,86 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     const currentConfig = get().config;
     if (!currentConfig) return;
 
+    const updateKeys = Object.keys(updates);
+    let rollbackConfig = currentConfig;
+    if (pendingUpdatesBase) {
+      const rollbackRecord = { ...currentConfig } as Record<string, unknown>;
+      let overlapsPendingUpdate = false;
+      for (const key of updateKeys) {
+        if (pendingUpdates.has(key)) {
+          overlapsPendingUpdate = true;
+          rollbackRecord[key] = (pendingUpdatesBase as unknown as Record<string, unknown>)[key];
+          pendingUpdates.delete(key);
+        }
+      }
+      if (overlapsPendingUpdate) {
+        rollbackConfig = rollbackRecord as unknown as Config;
+      }
+      if (pendingUpdates.size === 0) {
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        pendingUpdatesBase = null;
+      }
+    }
+
+    const mutationId = ++configMutationSequence;
+    if (!mutationCycleBase) {
+      mutationCycleBase = rollbackConfig;
+    }
+
     const newConfig = { ...currentConfig, ...updates };
     set({ config: newConfig });
     saveConfigToStorage(newConfig);
     broadcastConfigUpdate(newConfig);
 
-    const response = await configService.updateConfig(updates);
-    if (!response.success) {
-      set({ config: currentConfig, error: response.error });
+    configMutationsInFlight += 1;
+    try {
+      const response = await enqueueConfigMutation(
+        () => configService.updateConfig(updates),
+      );
+      if (response.success && response.data) {
+        mutationCycleServerConfig = response.data;
+      }
+      if (mutationId === configMutationSequence) {
+        if (response.success && response.data) {
+          const nextConfig = mergePendingUpdates(response.data);
+          set({ config: nextConfig, error: null });
+          saveConfigToStorage(nextConfig);
+          broadcastConfigUpdate(nextConfig);
+        } else {
+          const nextConfig = mergePendingUpdates(rollbackConfig);
+          set({ config: nextConfig, error: response.error });
+          saveConfigToStorage(nextConfig);
+          broadcastConfigUpdate(nextConfig);
+        }
+      }
+    } finally {
+      configMutationsInFlight -= 1;
+      if (configMutationsInFlight === 0 && pendingUpdates.size === 0) {
+        const syncSequence = configMutationSequence;
+        const syncLoadId = ++configLoadSequence;
+        const authoritative = await configService.getConfig({ forceFresh: true });
+        if (syncSequence === configMutationSequence && syncLoadId === configLoadSequence) {
+          if (authoritative.success && authoritative.data) {
+            set({ config: authoritative.data, error: null });
+            saveConfigToStorage(authoritative.data);
+            broadcastConfigUpdate(authoritative.data);
+          } else {
+            const fallback = mutationCycleServerConfig ?? mutationCycleBase;
+            if (fallback) {
+              set({ config: fallback, error: authoritative.error });
+              saveConfigToStorage(fallback);
+              broadcastConfigUpdate(fallback);
+            } else {
+              set({ error: authoritative.error });
+            }
+          }
+          mutationCycleBase = null;
+          mutationCycleServerConfig = null;
+        }
+      }
     }
   },
 

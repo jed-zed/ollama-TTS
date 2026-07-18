@@ -10,7 +10,12 @@ import type {
   TTSTestResponse,
   TTSSynthesizeRequest,
   TTSSynthesizeResponse,
-  GSVCharacter,
+  TTSStatusResponse,
+  TTSCommandResponse,
+  CharacterInfo,
+  CharacterListResponse,
+  AddCharacterRequest,
+  UpdateCharacterRequest,
 } from './types';
 
 /**
@@ -19,10 +24,11 @@ import type {
  * @param url 可选的 API URL（用于测试未保存的配置）
  */
 export async function testTTSEngine(
-  engine: string,
+  engine: TTSTestRequest['engine'],
   url?: string
 ): Promise<ApiResponse<TTSTestResponse>> {
-  return apiClient.post<TTSTestResponse>('/api/tts/test', { engine, url });
+  const request: TTSTestRequest = { engine, url };
+  return apiClient.post<TTSTestResponse>('/api/tts/test', request);
 }
 
 /**
@@ -37,15 +43,15 @@ export async function synthesize(
 /**
  * 停止当前播放
  */
-export async function stopPlayback(): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.post('/api/tts/stop');
+export async function stopPlayback(): Promise<ApiResponse<TTSCommandResponse>> {
+  return apiClient.post<TTSCommandResponse>('/api/tts/stop');
 }
 
 /**
  * 停止所有播放并清空队列
  */
-export async function stopAll(): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.post('/api/tts/stop-all');
+export async function stopAll(): Promise<ApiResponse<TTSCommandResponse>> {
+  return apiClient.post<TTSCommandResponse>('/api/tts/stop-all');
 }
 
 /**
@@ -53,22 +59,15 @@ export async function stopAll(): Promise<ApiResponse<{ success: boolean }>> {
  */
 export async function setVolume(
   volume: number
-): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.post('/api/tts/volume', { volume });
+): Promise<ApiResponse<TTSCommandResponse>> {
+  return apiClient.post<TTSCommandResponse>('/api/tts/volume', { volume });
 }
 
 /**
  * 获取播放状态
  */
-export async function getPlaybackStatus(): Promise<
-  ApiResponse<{
-    is_playing?: boolean;
-    is_synthesizing?: boolean;
-    playing?: boolean;
-    queue_size: number;
-  }>
-> {
-  return apiClient.get('/api/tts/status');
+export async function getPlaybackStatus(): Promise<ApiResponse<TTSStatusResponse>> {
+  return apiClient.get<TTSStatusResponse>('/api/tts/status');
 }
 
 // ========== 角色管理 ==========
@@ -76,17 +75,17 @@ export async function getPlaybackStatus(): Promise<
 /**
  * 获取所有角色
  */
-export async function getCharacters(): Promise<ApiResponse<GSVCharacter[]>> {
-  return apiClient.get<GSVCharacter[]>('/api/characters');
+export async function getCharacters(): Promise<ApiResponse<CharacterListResponse>> {
+  return apiClient.get<CharacterListResponse>('/api/characters');
 }
 
 /**
  * 添加角色
  */
 export async function addCharacter(
-  character: GSVCharacter
-): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.post('/api/characters', character);
+  character: AddCharacterRequest
+): Promise<ApiResponse<CharacterInfo>> {
+  return apiClient.post<CharacterInfo>('/api/characters', character);
 }
 
 /**
@@ -94,9 +93,9 @@ export async function addCharacter(
  */
 export async function updateCharacter(
   id: string,
-  character: Partial<GSVCharacter>
-): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.put(`/api/characters/${id}`, character);
+  character: UpdateCharacterRequest
+): Promise<ApiResponse<string>> {
+  return apiClient.put<string>(`/api/characters/${encodeURIComponent(id)}`, character);
 }
 
 /**
@@ -104,8 +103,8 @@ export async function updateCharacter(
  */
 export async function deleteCharacter(
   id: string
-): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.delete(`/api/characters/${id}`);
+): Promise<ApiResponse<string>> {
+  return apiClient.delete<string>(`/api/characters/${encodeURIComponent(id)}`);
 }
 
 /**
@@ -113,6 +112,6 @@ export async function deleteCharacter(
  */
 export async function switchCharacter(
   characterId: string
-): Promise<ApiResponse<{ success: boolean }>> {
-  return apiClient.post('/api/characters/switch', { character_id: characterId });
+): Promise<ApiResponse<string>> {
+  return apiClient.post<string>('/api/characters/switch', { character_id: characterId });
 }

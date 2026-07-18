@@ -47,6 +47,19 @@ async function initTauriApi() {
 // 初始化
 initTauriApi();
 
+export interface SubtitleContentUpdate {
+  /** 完整文本快照；首次同步、重置或文本回退时发送。 */
+  text?: string;
+  /** 相对上一条已发送内容的新增文本。 */
+  delta?: string;
+  /** 收到后应先丢弃字幕窗口中的旧内容。 */
+  reset?: boolean;
+  /** 本次内容应写入字幕窗口历史记录。 */
+  final?: boolean;
+  speaker?: string;
+  isStreaming: boolean;
+}
+
 /**
  * 字幕窗口管理 API
  */
@@ -174,7 +187,7 @@ export const subtitleWindow = {
    * 发送字幕内容更新事件
    * 使用 emitTo 直接发送到 subtitle 窗口
    */
-  async emitContentUpdate(content: { text: string; speaker?: string; isStreaming: boolean }): Promise<void> {
+  async emitContentUpdate(content: SubtitleContentUpdate): Promise<void> {
     if (!isTauri()) return;
     await initTauriApi();
     if (emitTo) {
@@ -185,12 +198,12 @@ export const subtitleWindow = {
   /**
    * 监听字幕内容更新事件
    */
-  async onContentUpdate(handler: (content: { text: string; speaker?: string; isStreaming: boolean }) => void): Promise<() => void> {
+  async onContentUpdate(handler: (content: SubtitleContentUpdate) => void): Promise<() => void> {
     if (!isTauri()) return () => {};
     await initTauriApi();
     if (listen) {
       return listen('subtitle-content-update', (event) => {
-        handler(event.payload as { text: string; speaker?: string; isStreaming: boolean });
+        handler(event.payload as SubtitleContentUpdate);
       });
     }
     return () => {};
@@ -294,6 +307,32 @@ export const subtitleWindow = {
     await initTauriApi();
     if (listen) {
       return listen('subtitle-request-history', () => {
+        handler();
+      });
+    }
+    return () => {};
+  },
+
+  /**
+   * 请求当前字幕内容快照（从字幕窗口发送到主窗口）。
+   * 字幕窗口先注册内容监听器再发送该事件，避免窗口创建期间丢失流片段。
+   */
+  async requestContentSync(): Promise<void> {
+    if (!isTauri()) return;
+    await initTauriApi();
+    if (emitTo) {
+      await emitTo('main', 'subtitle-request-content', {});
+    }
+  },
+
+  /**
+   * 监听字幕内容快照请求（主窗口监听）。
+   */
+  async onContentRequest(handler: () => void): Promise<() => void> {
+    if (!isTauri()) return () => {};
+    await initTauriApi();
+    if (listen) {
+      return listen('subtitle-request-content', () => {
         handler();
       });
     }

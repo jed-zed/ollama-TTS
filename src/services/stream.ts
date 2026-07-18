@@ -43,7 +43,14 @@ export async function streamChat(
   return apiClient.stream(
     '/api/chat',
     { ...request, stream: true },
-    (data) => callbacks.onChunk(data as StreamEvent),
+    (data) => {
+      const event = data as StreamEvent;
+      if (event.type === 'error') {
+        callbacks.onError?.(event.data.error ?? '流式响应错误');
+        return;
+      }
+      callbacks.onChunk(event);
+    },
     callbacks.onError,
     callbacks.onComplete
   );

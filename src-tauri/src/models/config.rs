@@ -1,5 +1,5 @@
 //! 配置数据模型
-//! 
+//!
 //! 定义应用的配置结构，对应 Python 后端的 config.py。
 
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ pub struct UserPresetMeta {
 }
 
 /// 主配置结构体
-/// 
+///
 /// 包含应用的所有配置项，对应 Python 后端的 config.json。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,6 +37,9 @@ pub struct Config {
     pub main_api_port: u16,
     /// 远程 AI API 地址
     pub api_url: String,
+    /// 旧桥接迁移或 LLM 目标集合变化后，需由用户明确确认全部 API 目标。
+    #[serde(default)]
+    pub api_target_confirmation_required: bool,
     /// API 密钥
     pub api_key: String,
     /// 模型名称
@@ -55,7 +58,7 @@ pub struct Config {
     pub preset_configs: HashMap<String, PresetApiConfig>,
     /// 用户自定义预设元数据
     pub user_presets: HashMap<String, UserPresetMeta>,
-    
+
     // ==================== TTS 配置 ====================
     /// 是否启用 TTS
     pub tts_enabled: bool,
@@ -73,7 +76,7 @@ pub struct Config {
     pub tts_volume: f32,
     /// 播放模式: "dialogue" | "fulltext"
     pub tts_play_mode: String,
-    
+
     // ==================== GSV 引擎配置 ====================
     /// top_k 参数
     pub gsv_top_k: i32,
@@ -99,7 +102,7 @@ pub struct Config {
     pub gsv_max_ref_audios: i32,
     /// 情感占比阈值（低于此值的情感将被忽略，默认 0.3 即 30%）
     pub gsv_emotion_threshold: f32,
-    
+
     // ==================== 语音识别配置 ====================
     /// 语音引擎: "auto" | "baidu" | "xunfei" | "vosk"
     pub voice_engine: String,
@@ -109,20 +112,20 @@ pub struct Config {
     pub vosk_model_path: String,
     /// 语音语言
     pub voice_language: String,
-    
+
     // ==================== 百度语音 API ====================
     pub baidu_app_id: String,
     pub baidu_api_key: String,
     pub baidu_secret_key: String,
-    
+
     // ==================== 讯飞语音识别 API ====================
     pub xunfei_app_id: String,
     pub xunfei_api_key: String,
     pub xunfei_api_secret: String,
-    
+
     // ==================== 语音识别引擎选择 ====================
     pub speech_engine: String,
-    
+
     // ==================== IndexTTS 配置 ====================
     /// IndexTTS API 地址
     pub indextts_api_url: String,
@@ -136,38 +139,16 @@ pub struct Config {
     pub indextts_emo_weight: f32,
     /// 分句最大 Token 数
     pub indextts_max_tokens: i32,
-    
+
     // ==================== 全局快捷键配置 ====================
     pub voice_shortcut_enabled: bool,
     pub voice_shortcut: String,
     /// 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
     pub paste_mode: String,
 
-    /// 局域网开放：绑定 0.0.0.0 允许局域网设备访问
+    /// 局域网开放：仅让 Ollama 兼容代理绑定 0.0.0.0；控制 API 始终为本机访问
     #[serde(default)]
     pub lan_access_enabled: bool,
-
-    #[serde(default)]
-    pub antigravity_bridge_enabled: bool,
-    #[serde(default = "default_antigravity_window_title")]
-    pub antigravity_window_title: String,
-    #[serde(default = "default_antigravity_timeout_ms")]
-    pub antigravity_timeout_ms: i32,
-    #[serde(default = "default_antigravity_max_retries")]
-    pub antigravity_max_retries: i32,
-    #[serde(default)]
-    pub antigravity_pending_submit_fallback_enabled: bool,
-    #[serde(default)]
-    pub antigravity_include_thinking: bool,
-    #[serde(default)]
-    pub antigravity_stream_enabled: bool,
-    #[serde(default = "default_antigravity_bridge_model_id")]
-    pub antigravity_bridge_model_id: String,
-    #[serde(default = "default_antigravity_max_concurrent")]
-    pub antigravity_max_concurrent: i32,
-    /// 桥接流式输出每字符延迟 (ms)，用于匀速打字效果
-    #[serde(default = "default_antigravity_stream_char_delay")]
-    pub antigravity_stream_char_delay: i32,
 
     // ==================== 辅助模型配置 ====================
     #[serde(default)]
@@ -181,7 +162,7 @@ pub struct Config {
 
     // ==================== 历史压缩配置 ====================
     pub history_compression: HistoryCompressionConfig,
-    
+
     // ==================== 字幕配置 ====================
     /// 字幕字体大小
     pub subtitle_font_size: i32,
@@ -221,6 +202,7 @@ impl Default for Config {
             // API 配置
             main_api_port: default_main_api_port(),
             api_url: String::new(),
+            api_target_confirmation_required: false,
             api_key: String::new(),
             model_name: String::new(),
             system_prompt_injection: DEFAULT_SYSTEM_PROMPT_INJECTION.to_string(),
@@ -230,7 +212,7 @@ impl Default for Config {
             custom_model_name: String::new(),
             preset_configs: HashMap::new(),
             user_presets: HashMap::new(),
-            
+
             // TTS 配置
             tts_enabled: true,
             gsv_api_url: "http://localhost:9880/tts".to_string(),
@@ -240,7 +222,7 @@ impl Default for Config {
             tts_default_character: String::new(),
             tts_volume: 0.8,
             tts_play_mode: "dialogue".to_string(),
-            
+
             // GSV 引擎配置
             gsv_top_k: 40,
             gsv_top_p: 0.9,
@@ -254,26 +236,26 @@ impl Default for Config {
             gsv_min_ref_audios: 2,
             gsv_max_ref_audios: 3,
             gsv_emotion_threshold: 0.3,
-            
+
             // 语音识别配置
             voice_engine: "auto".to_string(),
             voice_enabled: false,
             vosk_model_path: String::new(),
             voice_language: "zh-CN".to_string(),
-            
+
             // 百度语音 API
             baidu_app_id: String::new(),
             baidu_api_key: String::new(),
             baidu_secret_key: String::new(),
-            
+
             // 讯飞语音识别 API
             xunfei_app_id: String::new(),
             xunfei_api_key: String::new(),
             xunfei_api_secret: String::new(),
-            
+
             // 语音识别引擎选择
             speech_engine: "baidu".to_string(),
-            
+
             // IndexTTS 配置
             indextts_api_url: "http://192.168.100.171:7860/".to_string(),
             indextts_prompt_audio: String::new(),
@@ -281,24 +263,13 @@ impl Default for Config {
             indextts_emo_control_method: "使用情感向量控制".to_string(),
             indextts_emo_weight: 0.8,
             indextts_max_tokens: 120,
-            
+
             // 全局快捷键配置
             voice_shortcut_enabled: false,
             voice_shortcut: "Ctrl+Shift+,".to_string(),
             paste_mode: "direct".to_string(),
 
             lan_access_enabled: false,
-
-            antigravity_bridge_enabled: false,
-            antigravity_window_title: default_antigravity_window_title(),
-            antigravity_timeout_ms: default_antigravity_timeout_ms(),
-            antigravity_max_retries: default_antigravity_max_retries(),
-            antigravity_pending_submit_fallback_enabled: false,
-            antigravity_include_thinking: false,
-            antigravity_stream_enabled: false,
-            antigravity_bridge_model_id: default_antigravity_bridge_model_id(),
-            antigravity_max_concurrent: default_antigravity_max_concurrent(),
-            antigravity_stream_char_delay: default_antigravity_stream_char_delay(),
 
             // 辅助模型配置
             fallback_model_enabled: false,
@@ -308,7 +279,7 @@ impl Default for Config {
 
             // 历史压缩配置
             history_compression: HistoryCompressionConfig::default(),
-            
+
             // 字幕配置
             subtitle_font_size: 24,
             subtitle_opacity: 0.9,
@@ -388,15 +359,15 @@ impl Default for HistoryCompressionConfig {
     }
 }
 
-fn default_fallback_trigger_threshold() -> i32 { 100 }
-fn default_fallback_pattern() -> String { "^SYSTEM:\\n".to_string() }
-fn default_antigravity_window_title() -> String { "Antigravity".to_string() }
-fn default_antigravity_timeout_ms() -> i32 { 180000 }
-fn default_antigravity_max_retries() -> i32 { 0 }
-fn default_antigravity_max_concurrent() -> i32 { 3 }
-fn default_antigravity_bridge_model_id() -> String { "MODEL_PLACEHOLDER_M18".to_string() }
-fn default_antigravity_stream_char_delay() -> i32 { 20 }
-fn default_main_api_port() -> u16 { 8765 }
+fn default_fallback_trigger_threshold() -> i32 {
+    100
+}
+fn default_fallback_pattern() -> String {
+    "^SYSTEM:\\n".to_string()
+}
+fn default_main_api_port() -> u16 {
+    8765
+}
 
 /// 默认系统提示词注入
 pub const DEFAULT_SYSTEM_PROMPT_INJECTION: &str = r#"

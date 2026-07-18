@@ -1,9 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { NavLink, useLocation, Outlet } from 'react-router-dom';
-import { LayoutDashboard, MessageSquareText, Mic, ScrollText, Settings2, Power, PlugZap, Save, FileText, Loader2 } from 'lucide-react';
+import { MessageSquareText, Mic, Settings2, Power, PlugZap, Save, FileText, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { useConfigStore } from '@/stores/configStore';
 import { useStreamStore } from '@/stores/streamStore';
 import { streamManager } from '@/services/stream';
 import { subtitleWindow, isTauri } from '@/services/tauri';
@@ -12,11 +10,10 @@ import { getBackendBaseUrl } from '@/lib/backendUrl';
 
 const AppLayout = () => {
   const location = useLocation();
-  const loadConfig = useConfigStore((state) => state.loadConfig);
-  const config = useConfigStore((state) => state.config);
   const setConnectionStatus = useStreamStore((state) => state.setConnectionStatus);
   const handleStreamEvent = useStreamStore((state) => state.handleStreamEvent);
   const hideSubtitle = useStreamStore((state) => state.hideSubtitle);
+  const syncContentToOverlay = useStreamStore((state) => state.syncContentToOverlay);
 
   const [backendConnected, setBackendConnected] = useState(false);
   const [proxyRunning, setProxyRunning] = useState(false);
@@ -24,14 +21,14 @@ const AppLayout = () => {
 
   const mainPort = new URL(getBackendBaseUrl()).port || '8765';
 
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     try {
-      // 检查主后端连接
-      const backendResult = await checkBackendHealth();
+      const [backendResult, proxyResult] = await Promise.all([
+        checkBackendHealth(),
+        getProxyStatus(),
+      ]);
       setBackendConnected(backendResult.connected);
 
-      // 同时检查代理状态，以便控制停止按钮
-      const proxyResult = await getProxyStatus();
       if (proxyResult.success && proxyResult.data) {
         setProxyRunning(proxyResult.data.running);
       } else {
@@ -42,7 +39,7 @@ const AppLayout = () => {
       setBackendConnected(false);
       setProxyRunning(false);
     }
-  };
+  }, []);
 
   const handleStopService = async () => {
     setIsStopping(true);
@@ -59,26 +56,32 @@ const AppLayout = () => {
   useEffect(() => {
     if (!isTauri()) return;
 
-    let unsubscribe: (() => void) | null = null;
+    let disposed = false;
+    const unsubscribers: Array<() => void> = [];
 
-    subtitleWindow.onUserHide(() => {
-      hideSubtitle();
-    }).then((unsub) => {
-      unsubscribe = unsub;
-    });
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
+    const register = async (subscription: Promise<() => void>) => {
+      try {
+        const unsubscribe = await subscription;
+        if (disposed) {
+          unsubscribe();
+        } else {
+          unsubscribers.push(unsubscribe);
+        }
+      } catch (error) {
+        console.warn('[AppLayout] Failed to register subtitle listener:', error);
       }
     };
-  }, [hideSubtitle]);
+
+    void register(subtitleWindow.onUserHide(hideSubtitle));
+    void register(subtitleWindow.onContentRequest(syncContentToOverlay));
+
+    return () => {
+      disposed = true;
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [hideSubtitle, syncContentToOverlay]);
 
   useEffect(() => {
-    if (!config) {
-      loadConfig();
-    }
-
     streamManager.onStatusChange = (status) => {
       setConnectionStatus(status);
     };
@@ -88,15 +91,17 @@ const AppLayout = () => {
     streamManager.connect();
 
     // 初始检查状态
-    checkStatus();
+    void checkStatus();
     // 轮询状态
-    const timer = setInterval(checkStatus, 5000);
+    const timer = setInterval(() => {
+      void checkStatus();
+    }, 5000);
 
     return () => {
       streamManager.disconnect();
       clearInterval(timer);
     };
-  }, [config, loadConfig, setConnectionStatus, handleStreamEvent]);
+  }, [checkStatus, setConnectionStatus, handleStreamEvent]);
 
   const navItems = [
     { path: '/', label: '服务连接', icon: PlugZap },

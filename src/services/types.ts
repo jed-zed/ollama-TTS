@@ -48,6 +48,7 @@ export interface UserPresetMeta {
 export interface Config {
   // API 配置
   api_url: string;
+  api_target_confirmation_required: boolean;
   api_key: string;
   model_name: string;
   current_api_preset: string;
@@ -132,19 +133,8 @@ export interface Config {
   // 粘贴模式：direct=Ctrl+V, ahk=Ctrl+Shift+V (AutoHotkey)
   paste_mode: 'direct' | 'ahk';
 
-  // 局域网开放
+  // Ollama 兼容代理的局域网开放（控制 API 始终仅限本机）
   lan_access_enabled: boolean;
-
-  antigravity_bridge_enabled: boolean;
-  antigravity_include_thinking: boolean;
-  antigravity_stream_enabled: boolean;
-  antigravity_bridge_model_id: string;
-  antigravity_max_concurrent: number;
-  antigravity_stream_char_delay: number;
-  antigravity_window_title: string;
-  antigravity_timeout_ms: number;
-  antigravity_max_retries: number;
-  antigravity_pending_submit_fallback_enabled: boolean;
 
   // 辅助模型配置（双重检查版）
   fallback_model_enabled?: boolean;
@@ -159,7 +149,7 @@ export interface Config {
 // ========== TTS 相关 ==========
 
 export interface TTSTestRequest {
-  engine: string;
+  engine: 'gpt_sovits';
   url?: string;
 }
 
@@ -172,7 +162,12 @@ export interface TTSSynthesizeRequest {
   text: string;
   emotion?: string;
   speaker?: string;
+  gender?: string;
+  emotion_description?: string;
   speed?: number;
+  emotion_vector?: Record<string, number>;
+  is_nsfw?: boolean;
+  auto_play?: boolean;
 }
 
 export interface TTSSynthesizeResponse {
@@ -183,6 +178,59 @@ export interface TTSSynthesizeResponse {
   emotion_used?: string;
   segment_count?: number;
 }
+
+export interface TTSStatusResponse {
+  enabled: boolean;
+  auto_play: boolean;
+  playing: boolean;
+  is_playing: boolean;
+  is_synthesizing: boolean;
+  queue_size: number;
+  volume: number;
+  engine_available: boolean;
+}
+
+export interface TTSCommandResponse {
+  success: boolean;
+  message?: string;
+  volume?: number;
+}
+
+// 独立角色管理 API 使用的模型；它与 config.gsv_characters 的结构不同。
+export interface CharacterInfo {
+  character_id: string;
+  name: string;
+  gender: string;
+  description: string;
+  emotion_count: number;
+  emotions: string[];
+  is_current: boolean;
+}
+
+export interface CharacterListResponse {
+  characters: CharacterInfo[];
+  total: number;
+  current_character_id?: string;
+}
+
+export interface CharacterEmotionConfig {
+  emotion_id: string;
+  file: string;
+  prompt: string;
+  keywords?: string[];
+}
+
+export interface AddCharacterRequest {
+  character_id: string;
+  name: string;
+  gender: string;
+  ref_audio_dir: string;
+  description?: string;
+  name_aliases?: string[];
+  available_emotions?: Record<string, CharacterEmotionConfig>;
+}
+
+export type UpdateCharacterRequest = Partial<Omit<AddCharacterRequest, 'character_id'>>;
 
 // ========== 流式窗口相关 ==========
 

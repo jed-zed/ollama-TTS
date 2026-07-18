@@ -40,7 +40,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-stream = { version = "0.1", features = ["sync", "time"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
@@ -51,8 +51,7 @@ sysproxy = "0.3"
 # Base64 encoding
 base64 = "0.22"
 
-# SSE and async streams
-async-stream = "0.3"
+# Async streams
 futures = "0.3"
 
 # Utilities
@@ -64,6 +63,7 @@ regex = "1"
 thiserror = "1.0"
 anyhow = "1.0"
 rand = "0.8"
+tempfile = "3"
 
 # WebSocket client (for Xunfei speech recognition)
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
@@ -79,6 +79,3 @@ tauri-plugin-mcp-gui = { path = "../tauri-plugin-mcp" }
 tauri-plugin-global-shortcut = "2"
 enigo = "0.3"
 arboard = "3"
-
-[dev-dependencies]
-tempfile = "3"

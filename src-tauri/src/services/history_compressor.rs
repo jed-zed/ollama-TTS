@@ -8,15 +8,17 @@
 //! 2. 压缩策略：保留最近N轮对话，压缩其余部分
 //! 3. 熔断机制：待压缩区摘要比例超过阈值时终止压缩
 
-use std::fs;
-use std::path::{Path, PathBuf};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn, error, debug};
+use std::fs;
+use std::path::{Path, PathBuf};
+use tracing::{debug, error, info, warn};
 
-use crate::models::config::{HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT, SUMMARY_MERGE_PROMPT};
-use crate::services::http_client;
+use crate::models::config::{
+    HistoryCompressionConfig, DEFAULT_COMPRESSION_PROMPT, SUMMARY_MERGE_PROMPT,
+};
+use crate::services::{atomic_file, config_store::ApiTargetConfirmationGuard, http_client};
 
 /// 对话历史分析结果（用于状态检测与阈值判定）
 #[derive(Debug, Clone)]
@@ -138,6 +140,7 @@ impl CompressionResult {
 }
 
 /// 历史压缩器
+#[derive(Clone)]
 pub struct HistoryCompressor {
     /// 压缩配置
     config: HistoryCompressionConfig,
@@ -149,6 +152,8 @@ pub struct HistoryCompressor {
     model_name: String,
     /// HTTP 客户端
     client: reqwest::Client,
+    /// 共享 LLM 目标确认保护
+    api_target_guard: ApiTargetConfirmationGuard,
 }
 
 impl HistoryCompressor {
@@ -158,6 +163,7 @@ impl HistoryCompressor {
         api_url: String,
         api_key: String,
         model_name: String,
+        api_target_guard: ApiTargetConfirmationGuard,
     ) -> Self {
         Self {
             config,
@@ -165,6 +171,7 @@ impl HistoryCompressor {
             api_key,
             model_name,
             client: http_client::create_http_client(),
+            api_target_guard,
         }
     }
 
@@ -181,14 +188,18 @@ impl HistoryCompressor {
     }
 
     /// 判断是否需要压缩（统一判定逻辑）
-    /// 
+    ///
     /// 返回 (should_compress, skip_reason)
     /// - should_compress: 是否需要压缩
     /// - skip_reason: 如果不需要压缩，跳过的原因
-    /// 
+    ///
     /// 注意：此方法用于实际执行压缩时的判定，会检查 enabled 配置
     /// 使用 total_count（摘要数 + 对话轮次数）作为判定基准
-    pub fn should_compress(&self, analysis: &HistoryAnalysis, force: bool) -> (bool, Option<String>) {
+    pub fn should_compress(
+        &self,
+        analysis: &HistoryAnalysis,
+        force: bool,
+    ) -> (bool, Option<String>) {
         debug!(
             "📋 should_compress 检查: total={}, summaries={}, rounds={}, max={}, enabled={}, force={}",
             analysis.total_count, analysis.summary_count, analysis.round_count,
@@ -200,27 +211,38 @@ impl HistoryCompressor {
         }
 
         if analysis.total_count <= self.config.max_messages && !force {
-            return (false, Some(format!(
-                "总量 {}（{}摘要+{}轮对话）未超过阈值 {}",
-                analysis.total_count, analysis.summary_count, analysis.round_count,
-                self.config.max_messages
-            )));
+            return (
+                false,
+                Some(format!(
+                    "总量 {}（{}摘要+{}轮对话）未超过阈值 {}",
+                    analysis.total_count,
+                    analysis.summary_count,
+                    analysis.round_count,
+                    self.config.max_messages
+                )),
+            );
         }
 
         (true, None)
     }
 
     /// 判断是否超过压缩阈值（基于总量，不检查 enabled）
-    /// 
+    ///
     /// 用于状态检测，显示哪些文件"需要压缩"（即使功能未启用）
     /// 使用 total_count（摘要数 + 对话轮次数）作为判定基准
     pub fn exceeds_threshold(&self, analysis: &HistoryAnalysis) -> bool {
         let result = analysis.total_count > self.config.max_messages;
         debug!(
             "📊 阈值检查: Total({}) > Max({})? {} [summaries={}, rounds={}]",
-            analysis.total_count, self.config.max_messages,
-            if result { "YES -> 需要压缩" } else { "NO -> 无需压缩" },
-            analysis.summary_count, analysis.round_count
+            analysis.total_count,
+            self.config.max_messages,
+            if result {
+                "YES -> 需要压缩"
+            } else {
+                "NO -> 无需压缩"
+            },
+            analysis.summary_count,
+            analysis.round_count
         );
         result
     }
@@ -230,19 +252,19 @@ impl HistoryCompressor {
         if message.starts_with("System:") || message.starts_with("[历史摘要") {
             return false;
         }
-        
+
         let player_prefixes = ["Player:", "玩家:", "User:", "用户:", "player:", "user:"];
-        
+
         if !player_name.is_empty() && message.starts_with(&format!("{}:", player_name)) {
             return true;
         }
-        
+
         for prefix in player_prefixes {
             if message.starts_with(prefix) {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -260,13 +282,13 @@ impl HistoryCompressor {
         let mut rounds: Vec<Vec<String>> = Vec::new();
         let mut current_round: Vec<String> = Vec::new();
         let mut summaries: Vec<String> = Vec::new();
-        
+
         for item in conversation_history {
             if Self::is_summary_message(item) {
                 summaries.push(item.clone());
                 continue;
             }
-            
+
             if Self::is_player_message(item, player_name) {
                 if !current_round.is_empty() {
                     rounds.push(current_round);
@@ -280,11 +302,11 @@ impl HistoryCompressor {
                 }
             }
         }
-        
+
         if !current_round.is_empty() {
             rounds.push(current_round);
         }
-        
+
         (rounds, summaries)
     }
 
@@ -297,7 +319,8 @@ impl HistoryCompressor {
     /// 分析对话历史，返回完整统计信息
     /// 用于状态检测，确保 message_count 包含摘要和对话轮次
     fn analyze_history(conversation_history: &[String], player_name: &str) -> HistoryAnalysis {
-        let (rounds, summaries) = Self::parse_conversation_rounds(conversation_history, player_name);
+        let (rounds, summaries) =
+            Self::parse_conversation_rounds(conversation_history, player_name);
         let summary_count = summaries.len() as i32;
         let round_count = rounds.len() as i32;
         HistoryAnalysis {
@@ -312,11 +335,12 @@ impl HistoryCompressor {
         if messages.is_empty() {
             return 0.0;
         }
-        
-        let summary_count = messages.iter()
+
+        let summary_count = messages
+            .iter()
             .filter(|m| Self::is_summary_message(m))
             .count();
-        
+
         summary_count as f32 / messages.len() as f32
     }
 
@@ -328,9 +352,9 @@ impl HistoryCompressor {
         if messages_to_compress.is_empty() {
             return (false, 0.0, "待压缩区域为空".to_string());
         }
-        
+
         let summary_ratio = Self::calculate_summary_ratio(messages_to_compress);
-        
+
         if summary_ratio > threshold {
             return (
                 false,
@@ -342,7 +366,7 @@ impl HistoryCompressor {
                 ),
             );
         }
-        
+
         (
             true,
             summary_ratio,
@@ -421,7 +445,7 @@ impl HistoryCompressor {
     pub fn save_character_data(&self, file_path: &Path, data: &Value) -> bool {
         match serde_json::to_string_pretty(data) {
             Ok(content) => {
-                if let Err(e) = fs::write(file_path, content) {
+                if let Err(e) = atomic_file::write(file_path, content.as_bytes()) {
                     error!("保存文件失败 {:?}: {}", file_path, e);
                     return false;
                 }
@@ -456,7 +480,7 @@ impl HistoryCompressor {
         let backup_file_name = format!("{}_{}", timestamp, file_name);
         let backup_file_path = backup_path.join(backup_file_name);
 
-        match fs::copy(file_path, &backup_file_path) {
+        match atomic_file::copy(file_path, &backup_file_path) {
             Ok(_) => {
                 info!("已备份: {:?}", backup_file_path);
                 Some(backup_file_path)
@@ -510,10 +534,17 @@ impl HistoryCompressor {
             "stream": false
         });
 
-        info!("正在调用 AI 压缩，内容长度: {} 字符, 模型: {}", conversation_content.len(), self.model_name);
+        info!(
+            "正在调用 AI 压缩，内容长度: {} 字符, 模型: {}",
+            conversation_content.len(),
+            self.model_name
+        );
         info!("API URL: {}", self.api_url);
 
-        let response = self.client
+        self.api_target_guard.ensure_confirmed_for(&self.api_url)?;
+
+        let response = self
+            .client
             .post(&self.api_url)
             .headers(headers)
             .json(&payload)
@@ -524,17 +555,23 @@ impl HistoryCompressor {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_body = response.text().await.unwrap_or_else(|_| "无法读取错误响应".to_string());
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "无法读取错误响应".to_string());
             error!("API 返回错误状态: {}, 响应内容: {}", status, error_body);
             return Err(format!("API 返回错误状态: {} - {}", status, error_body));
         }
 
-        let data: Value = response.json().await
+        let data: Value = response
+            .json()
+            .await
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
         if let Some(choices) = data.get("choices").and_then(|v| v.as_array()) {
             if let Some(first_choice) = choices.first() {
-                let finish_reason = first_choice.get("finish_reason")
+                let finish_reason = first_choice
+                    .get("finish_reason")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
@@ -558,7 +595,8 @@ impl HistoryCompressor {
 
         if let Some(candidates) = data.get("candidates").and_then(|v| v.as_array()) {
             if let Some(first_candidate) = candidates.first() {
-                let finish_reason = first_candidate.get("finishReason")
+                let finish_reason = first_candidate
+                    .get("finishReason")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
@@ -623,9 +661,16 @@ impl HistoryCompressor {
             "stream": false
         });
 
-        info!("正在调用 AI 合并摘要，摘要数量: {}, 内容长度: {} 字符", summary_count, summaries_content.len());
+        info!(
+            "正在调用 AI 合并摘要，摘要数量: {}, 内容长度: {} 字符",
+            summary_count,
+            summaries_content.len()
+        );
 
-        let response = self.client
+        self.api_target_guard.ensure_confirmed_for(&self.api_url)?;
+
+        let response = self
+            .client
             .post(&self.api_url)
             .headers(headers)
             .json(&payload)
@@ -636,12 +681,17 @@ impl HistoryCompressor {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_body = response.text().await.unwrap_or_else(|_| "无法读取错误响应".to_string());
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "无法读取错误响应".to_string());
             error!("API 返回错误状态: {}, 响应内容: {}", status, error_body);
             return Err(format!("API 返回错误状态: {} - {}", status, error_body));
         }
 
-        let data: Value = response.json().await
+        let data: Value = response
+            .json()
+            .await
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
         // OpenAI 格式
@@ -678,15 +728,11 @@ impl HistoryCompressor {
 
     /// 压缩对话历史（新版：保留最近N轮策略）
     /// 返回 CompressOutcome 区分成功、跳过、失败三种情况
-    pub async fn compress_conversation_history(
-        &self,
-        data: &mut Value,
-    ) -> CompressOutcome {
-        let conversation_history = match data
-            .get("ConversationHistory")
-            .and_then(|v| v.as_array())
+    pub async fn compress_conversation_history(&self, data: &mut Value) -> CompressOutcome {
+        let conversation_history = match data.get("ConversationHistory").and_then(|v| v.as_array())
         {
-            Some(arr) => arr.iter()
+            Some(arr) => arr
+                .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect::<Vec<_>>(),
             None => {
@@ -698,39 +744,45 @@ impl HistoryCompressor {
             return CompressOutcome::Skip("对话历史为空".to_string());
         }
 
-        let character_name = data.get("Name")
+        let character_name = data
+            .get("Name")
             .and_then(|v| v.as_str())
             .unwrap_or("角色")
             .to_string();
 
-        let player_name = data.get("PlayerInfo")
+        let player_name = data
+            .get("PlayerInfo")
             .and_then(|pi| pi.get("RealName").or_else(|| pi.get("ClaimedName")))
             .and_then(|v| v.as_str())
             .unwrap_or("玩家")
             .to_string();
 
-        let (rounds, existing_summaries) = Self::parse_conversation_rounds(&conversation_history, &player_name);
+        let (rounds, existing_summaries) =
+            Self::parse_conversation_rounds(&conversation_history, &player_name);
         let total_rounds = rounds.len() as i32;
         let compress_count = self.config.compress_count;
         let summary_count = existing_summaries.len();
 
-        info!("[{}] 解析对话：共 {} 轮对话，{} 个历史摘要", 
-            character_name, total_rounds, summary_count);
+        info!(
+            "[{}] 解析对话：共 {} 轮对话，{} 个历史摘要",
+            character_name, total_rounds, summary_count
+        );
 
         // 计算摘要合并阈值：触发阈值的 50%，向上取整
         let summary_merge_threshold = ((self.config.max_messages as f32) * 0.5).ceil() as usize;
 
         // 检查是否需要触发摘要合并
         if summary_count >= summary_merge_threshold {
-            info!("[{}] 摘要数量 {} >= 阈值 {}，触发摘要合并", 
-                character_name, summary_count, summary_merge_threshold);
+            info!(
+                "[{}] 摘要数量 {} >= 阈值 {}，触发摘要合并",
+                character_name, summary_count, summary_merge_threshold
+            );
 
             // 调用 AI 合并摘要
-            let merged_summary = match self.call_ai_for_summary_merge(
-                &existing_summaries,
-                &character_name,
-                &player_name,
-            ).await {
+            let merged_summary = match self
+                .call_ai_for_summary_merge(&existing_summaries, &character_name, &player_name)
+                .await
+            {
                 Ok(s) => s,
                 Err(e) => {
                     error!("❌ [{}] 摘要合并失败: {}", character_name, e);
@@ -741,8 +793,7 @@ impl HistoryCompressor {
             // 创建合并后的摘要条目
             let merged_summary_entry = format!(
                 "System: [历史摘要 - 合并了{}个摘要]\n\n{}",
-                summary_count,
-                merged_summary
+                summary_count, merged_summary
             );
 
             // 重建对话历史：1个合并摘要 + 所有对话轮次
@@ -757,8 +808,7 @@ impl HistoryCompressor {
 
             let result_msg = format!(
                 "✅ 摘要合并完成: {}个摘要 -> 1个精简摘要, 保留{}轮对话",
-                summary_count,
-                total_rounds
+                summary_count, total_rounds
             );
             info!("[{}] {}", character_name, result_msg);
 
@@ -766,7 +816,7 @@ impl HistoryCompressor {
         }
 
         let total_count = (summary_count as i32) + total_rounds;
-        
+
         if total_rounds == 0 {
             return CompressOutcome::Skip("没有可压缩的对话轮次".to_string());
         }
@@ -812,16 +862,24 @@ impl HistoryCompressor {
         let message_count = messages_to_compress.len() as i32;
         let round_count = rounds_to_compress.len() as i32;
 
-        info!("[{}] 开始压缩：压缩最旧 {} 轮（{} 条消息），保留最新 {} 轮",
-            character_name, round_count, message_count, rounds_to_keep.len());
-
-        let summary = match self.call_ai_for_compression(
-            &conversation_text,
-            &character_name,
-            &player_name,
-            message_count,
+        info!(
+            "[{}] 开始压缩：压缩最旧 {} 轮（{} 条消息），保留最新 {} 轮",
+            character_name,
             round_count,
-        ).await {
+            message_count,
+            rounds_to_keep.len()
+        );
+
+        let summary = match self
+            .call_ai_for_compression(
+                &conversation_text,
+                &character_name,
+                &player_name,
+                message_count,
+                round_count,
+            )
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 error!("❌ [{}] 压缩失败: {}", character_name, e);
@@ -831,9 +889,7 @@ impl HistoryCompressor {
 
         let summary_entry = format!(
             "System: [历史摘要 - 压缩了{}条消息，共{}轮对话]\n\n{}",
-            message_count,
-            round_count,
-            summary
+            message_count, round_count, summary
         );
 
         let mut new_summaries = existing_summaries;
@@ -864,7 +920,8 @@ impl HistoryCompressor {
         file_path: &Path,
         force: bool,
     ) -> CompressionResult {
-        let file_name = file_path.file_name()
+        let file_name = file_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
@@ -872,26 +929,28 @@ impl HistoryCompressor {
             Some(d) => d,
             None => {
                 debug!("[忽略] {} - 非角色文件或无法读取", file_name);
-                return CompressionResult::ignored(
-                    format!("非角色文件: {}", file_name),
-                );
+                return CompressionResult::ignored(format!("非角色文件: {}", file_name));
             }
         };
 
         let conversation_history: Vec<String> = data
             .get("ConversationHistory")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let character_name = data.get("Name")
+        let character_name = data
+            .get("Name")
             .and_then(|v| v.as_str())
             .unwrap_or("未知")
             .to_string();
 
-        let player_name = data.get("PlayerInfo")
+        let player_name = data
+            .get("PlayerInfo")
             .and_then(|pi| pi.get("RealName").or_else(|| pi.get("ClaimedName")))
             .and_then(|v| v.as_str())
             .unwrap_or("玩家")
@@ -901,19 +960,32 @@ impl HistoryCompressor {
 
         info!(
             "📋 [{}] 压缩判定: Total({}) > Max({})? {} [summaries={}, rounds={}]",
-            character_name, analysis.total_count, self.config.max_messages,
-            if self.exceeds_threshold(&analysis) { "YES" } else { "NO" },
-            analysis.summary_count, analysis.round_count
+            character_name,
+            analysis.total_count,
+            self.config.max_messages,
+            if self.exceeds_threshold(&analysis) {
+                "YES"
+            } else {
+                "NO"
+            },
+            analysis.summary_count,
+            analysis.round_count
         );
 
         if !self.exceeds_threshold(&analysis) {
-            debug!("[跳过] {} - 总量 {} 未超过阈值 {}，无需压缩", 
-                character_name, analysis.total_count, self.config.max_messages);
+            debug!(
+                "[跳过] {} - 总量 {} 未超过阈值 {}，无需压缩",
+                character_name, analysis.total_count, self.config.max_messages
+            );
             return CompressionResult::skipped(
-                format!("[{}] 总量 {}（{}摘要+{}轮对话）未超过阈值 {}，无需压缩", 
-                    character_name, analysis.total_count, 
-                    analysis.summary_count, analysis.round_count,
-                    self.config.max_messages),
+                format!(
+                    "[{}] 总量 {}（{}摘要+{}轮对话）未超过阈值 {}，无需压缩",
+                    character_name,
+                    analysis.total_count,
+                    analysis.summary_count,
+                    analysis.round_count,
+                    self.config.max_messages
+                ),
                 Some(analysis.total_count),
             );
         }
@@ -926,8 +998,10 @@ impl HistoryCompressor {
             );
         }
 
-        info!("[压缩] {} - 开始压缩: 总量 {}（{}摘要+{}轮对话）", 
-            character_name, analysis.total_count, analysis.summary_count, analysis.round_count);
+        info!(
+            "[压缩] {} - 开始压缩: 总量 {}（{}摘要+{}轮对话）",
+            character_name, analysis.total_count, analysis.summary_count, analysis.round_count
+        );
 
         if self.config.backup_before_compress {
             if self.backup_file(file_path).is_none() {
@@ -945,9 +1019,11 @@ impl HistoryCompressor {
                     let new_history: Vec<String> = data
                         .get("ConversationHistory")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let new_analysis = Self::analyze_history(&new_history, &player_name);
 
@@ -985,7 +1061,11 @@ impl HistoryCompressor {
     /// 扫描并压缩所有需要压缩的文件
     pub async fn scan_and_compress_all(&self, force: bool) -> Vec<CompressionResult> {
         let json_files = self.scan_json_files();
-        info!("📂 扫描到 {} 个 JSON 文件, force={}", json_files.len(), force);
+        info!(
+            "📂 扫描到 {} 个 JSON 文件, force={}",
+            json_files.len(),
+            force
+        );
 
         let mut results = Vec::new();
         let mut success_count = 0;
@@ -995,7 +1075,7 @@ impl HistoryCompressor {
 
         for file_path in json_files {
             let result = self.check_and_compress_file(&file_path, force).await;
-            
+
             match result.status {
                 CompressionResultStatus::Success => {
                     success_count += 1;
@@ -1012,7 +1092,7 @@ impl HistoryCompressor {
                     error!("❌ {}", result.message);
                 }
             }
-            
+
             results.push(result);
         }
 
@@ -1030,7 +1110,7 @@ impl HistoryCompressor {
             "📊 get_compression_status: enabled={}, max_messages={}, save_data_path={}",
             self.config.enabled, self.config.max_messages, self.config.save_data_path
         );
-        
+
         let json_files = self.scan_json_files();
         let mut results = Vec::new();
 
@@ -1039,9 +1119,11 @@ impl HistoryCompressor {
                 let conversation_history: Vec<String> = data
                     .get("ConversationHistory")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let character_id = file_path
@@ -1050,12 +1132,14 @@ impl HistoryCompressor {
                     .unwrap_or("unknown")
                     .to_string();
 
-                let character_name = data.get("Name")
+                let character_name = data
+                    .get("Name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("未知")
                     .to_string();
 
-                let player_name = data.get("PlayerInfo")
+                let player_name = data
+                    .get("PlayerInfo")
                     .and_then(|pi| pi.get("RealName").or_else(|| pi.get("ClaimedName")))
                     .and_then(|v| v.as_str())
                     .unwrap_or("玩家")
@@ -1098,12 +1182,15 @@ impl HistoryCompressor {
                 let conversation_history: Vec<String> = data
                     .get("ConversationHistory")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
-                let player_name = data.get("PlayerInfo")
+                let player_name = data
+                    .get("PlayerInfo")
                     .and_then(|pi| pi.get("RealName").or_else(|| pi.get("ClaimedName")))
                     .and_then(|v| v.as_str())
                     .unwrap_or("玩家");
@@ -1111,14 +1198,15 @@ impl HistoryCompressor {
                 let analysis = Self::analyze_history(&conversation_history, player_name);
 
                 if self.exceeds_threshold(&analysis) {
-                    let character_name = data.get("Name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("未知");
+                    let character_name =
+                        data.get("Name").and_then(|v| v.as_str()).unwrap_or("未知");
 
                     info!(
                         "🔄 [自动压缩] {}: 总量 {}（{}摘要+{}轮对话）超过阈值 {}，开始压缩...",
-                        character_name, analysis.total_count, 
-                        analysis.summary_count, analysis.round_count,
+                        character_name,
+                        analysis.total_count,
+                        analysis.summary_count,
+                        analysis.round_count,
                         self.config.max_messages
                     );
 
@@ -1148,6 +1236,35 @@ impl Default for HistoryCompressor {
             String::new(),
             String::new(),
             String::new(),
+            ApiTargetConfirmationGuard::new(false),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn confirmation_guard_blocks_history_before_network() {
+        let compressor = HistoryCompressor::new(
+            HistoryCompressionConfig::default(),
+            "http://127.0.0.1:1/v1/chat/completions".to_string(),
+            String::new(),
+            "test".to_string(),
+            ApiTargetConfirmationGuard::new(true),
+        );
+
+        let error = compressor
+            .call_ai_for_compression("private history", "character", "player", 1, 1)
+            .await
+            .unwrap_err();
+        assert!(error.contains("旧版桥接已移除"));
+
+        let error = compressor
+            .call_ai_for_summary_merge(&["private summary".to_string()], "character", "player")
+            .await
+            .unwrap_err();
+        assert!(error.contains("旧版桥接已移除"));
     }
 }

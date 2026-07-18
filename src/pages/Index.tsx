@@ -303,10 +303,6 @@ const Index = () => {
             <div className={`w-2 h-2 rounded-full mr-2 ${ttsEnabled ? 'bg-purple-500' : 'bg-gray-400'}`} />
             TTS {ttsEnabled ? '已启用' : '已禁用'}
           </Badge>
-          <Badge variant="outline" className={`px-3 py-1.5 ${config?.antigravity_bridge_enabled ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-300 bg-slate-50 text-slate-600'}`}>
-            <div className={`w-2 h-2 rounded-full mr-2 ${config?.antigravity_bridge_enabled ? 'bg-indigo-500' : 'bg-slate-400'}`} />
-            Antigravity桥接 {config?.antigravity_bridge_enabled ? '已开启' : '已关闭'}
-          </Badge>
           <Badge variant="outline" className="px-3 py-1.5 border-amber-300 bg-amber-50 text-amber-600">
             <div className="w-2 h-2 rounded-full bg-amber-500 mr-2" />
             角色: {config?.gsv_current_character || '默认'}
@@ -396,82 +392,6 @@ const Index = () => {
               </p>
             </div>
           </CardContent>
-        </Card>
-
-        <Card className="glass border-none shadow-custom col-span-2">
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600">
-                  <Network className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>Antigravity 自动化桥接（实验性功能）</CardTitle>
-                  <CardDescription>开启后将不再走 API，改为 UI 自动化桥接</CardDescription>
-                </div>
-              </div>
-              <Switch
-                checked={config?.antigravity_bridge_enabled || false}
-                onCheckedChange={(checked) => updateConfig('antigravity_bridge_enabled', checked)}
-                className="data-[state=checked]:bg-indigo-500"
-              />
-            </div>
-          </CardHeader>
-          {config?.antigravity_bridge_enabled && (
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>窗口标题关键字</Label>
-                <Input
-                  value={config?.antigravity_window_title || 'Antigravity'}
-                  onChange={(e) => updateConfig('antigravity_window_title', e.target.value)}
-                  className="bg-white/50"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label>桥接超时（毫秒）</Label>
-                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_timeout_ms ?? 60000} ms</span>
-                </div>
-                <Slider
-                  value={[config?.antigravity_timeout_ms ?? 60000]}
-                  onValueChange={([value]) => updateConfig('antigravity_timeout_ms', value)}
-                  min={5000}
-                  max={120000}
-                  step={1000}
-                  className="w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label>失败重试次数</Label>
-                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_max_retries ?? 0} 次</span>
-                </div>
-                <Slider
-                  value={[config?.antigravity_max_retries ?? 0]}
-                  onValueChange={([value]) => updateConfig('antigravity_max_retries', value)}
-                  min={0}
-                  max={3}
-                  step={1}
-                  className="w-full"
-                />
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
-                <div className="space-y-0.5">
-                  <Label>启用 pending/submit 显式降级</Label>
-                  <p className="text-xs text-muted-foreground">仅在内置 LS 桥接失败后，允许通过 /api/bridge/pending 与 /api/bridge/submit 回填。</p>
-                </div>
-                <Switch
-                  checked={config?.antigravity_pending_submit_fallback_enabled || false}
-                  onCheckedChange={(checked) => updateConfig('antigravity_pending_submit_fallback_enabled', checked)}
-                  className="data-[state=checked]:bg-indigo-500"
-                />
-              </div>
-              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700 space-y-1">
-                <p>开启桥接后，/api/chat 与 /api/generate 会优先走内置 LS 桥接，不会自动回落到外部模型 API。</p>
-                <p>桥接请求按 FIFO 串行执行，吞吐会低于并行直连模式，高并发场景请谨慎开启。</p>
-              </div>
-            </CardContent>
-          )}
         </Card>
 
         <Card className="glass border-none shadow-custom col-span-2">

@@ -33,12 +33,34 @@ import { useTTSStore } from '@/stores/ttsStore';
 import { ModelCombobox } from '@/components/ModelCombobox';
 import PresetManager, { BUILTIN_PRESETS } from '@/components/PresetManager';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { checkBackendHealth, pollBackendHealth, type HealthCheckResponse, apiClient, getProxyStatus, startProxy, stopProxy, testProxy, testProxyStream, type TestStreamMetrics } from '@/services/api';
+import type { Config } from '@/services/types';
+
+const getConfirmationTargets = (config: Config | null, apiUrl: string): string[] => {
+  const targets = new Set<string>();
+  const mainTarget = apiUrl.trim();
+  if (mainTarget) targets.add(mainTarget);
+
+  const fallbackPresetId = config?.fallback_model_enabled
+    ? config.fallback_preset_id?.trim()
+    : '';
+  if (fallbackPresetId) {
+    const fallbackTarget = fallbackPresetId === 'custom'
+      ? config?.custom_api_url?.trim()
+      : config?.preset_configs?.[fallbackPresetId]?.api_url?.trim()
+        || BUILTIN_PRESETS[fallbackPresetId]?.url?.trim();
+    if (fallbackTarget) targets.add(fallbackTarget);
+  }
+
+  return Array.from(targets);
+};
 
 const Service = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // 后端连接状态
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'checking' | 'connected' | 'disconnected'>('unknown');
@@ -59,6 +81,7 @@ const Service = () => {
   const config = useConfig();
   const isLoading = useConfigLoading();
   const loadConfig = useConfigStore((state) => state.loadConfig);
+  const applyAuthoritativeConfig = useConfigStore((state) => state.applyAuthoritativeConfig);
   const updateConfig = useConfigStore((state) => state.updateConfig);
   const updateConfigBatch = useConfigStore((state) => state.updateConfigBatch);
 
@@ -72,6 +95,7 @@ const Service = () => {
   const [localApiKey, setLocalApiKey] = useState('');
   const [localModelName, setLocalModelName] = useState('');
   const [localSystemPrompt, setLocalSystemPrompt] = useState('');
+  const confirmationTargets = getConfirmationTargets(config, localApiUrl);
 
   // 检查后端连接
   const handleCheckBackend = useCallback(async () => {
@@ -109,6 +133,7 @@ const Service = () => {
         } else {
           setBackendStatus('connected');
         }
+        await loadConfig();
         checkProxyStatus();
       } else {
         setBackendStatus('disconnected');
@@ -168,8 +193,16 @@ const Service = () => {
   const handleStartProxy = async () => {
     setIsProxyOperating(true);
     try {
-      await startProxy();
-      await checkProxyStatus();
+      const result = await startProxy();
+      if (result.success) {
+        await Promise.all([
+          checkProxyStatus(),
+          handleCheckBackend(),
+          loadConfig(),
+        ]);
+      } else {
+        await checkProxyStatus();
+      }
     } finally {
       setIsProxyOperating(false);
     }
@@ -179,8 +212,16 @@ const Service = () => {
   const handleStopProxy = async () => {
     setIsProxyOperating(true);
     try {
-      await stopProxy();
-      await checkProxyStatus();
+      const result = await stopProxy();
+      if (result.success) {
+        await Promise.all([
+          checkProxyStatus(),
+          handleCheckBackend(),
+          loadConfig(),
+        ]);
+      } else {
+        await checkProxyStatus();
+      }
     } finally {
       setIsProxyOperating(false);
     }
@@ -188,6 +229,13 @@ const Service = () => {
 
   // 测试代理连接
   const handleTestProxy = async () => {
+    if (config?.api_target_confirmation_required) {
+      setProxyTestResult('✗ 请先确认 API URL');
+      setTestResponse('');
+      setTestMetrics(null);
+      return;
+    }
+
     setIsProxyTesting(true);
     setProxyTestResult(null);
     setTestResponse('');
@@ -238,6 +286,7 @@ const Service = () => {
       const unlistenStarted = await listen('backend-started', () => {
         setBackendStatus('connected');
         handleCheckBackend();
+        void loadConfig();
         checkProxyStatus();
       });
 
@@ -258,7 +307,7 @@ const Service = () => {
       clearTimeout(timer);
       cleanupPromise.then(cleanup => cleanup());
     };
-  }, []);
+  }, [checkProxyStatus, handleCheckBackend, loadConfig]);
 
   // 同步配置到本地状态 - 配置变化时更新
   useEffect(() => {
@@ -300,6 +349,25 @@ const Service = () => {
         model_name: localModelName,
         system_prompt_injection: localSystemPrompt,
       });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleConfirmApiTarget = async () => {
+    if (!localApiUrl.trim()) return;
+
+    setIsSaving(true);
+    setConfirmError(null);
+    try {
+      const confirmedConfig = await invoke<Config>('confirm_api_target', {
+        apiUrl: localApiUrl.trim(),
+        expectedTargets: confirmationTargets,
+      });
+      applyAuthoritativeConfig(confirmedConfig);
+      await loadConfig();
+    } catch (error) {
+      setConfirmError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsSaving(false);
     }
@@ -480,7 +548,7 @@ const Service = () => {
                   variant="outline"
                   size="sm"
                   onClick={handleTestProxy}
-                  disabled={isProxyTesting || proxyStatus !== 'running'}
+                  disabled={isProxyTesting || proxyStatus !== 'running' || config?.api_target_confirmation_required}
                   className="h-8"
                 >
                   {isProxyTesting ? (
@@ -494,6 +562,11 @@ const Service = () => {
             </div>
           </CardHeader>
           <CardContent className="pt-0 space-y-3">
+            {config?.api_target_confirmation_required && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                API 目标已变更或旧桥接已移除；确认所有目标前，代理测试和所有 LLM 请求均已暂停。
+              </div>
+            )}
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>外部应用访问地址:</span>
               <code className="bg-gray-100 px-2 py-1 rounded text-gray-700">
@@ -542,6 +615,35 @@ const Service = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {config?.api_target_confirmation_required && (
+              <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <p>
+                  API 目标已变更或旧桥接已移除。为避免误发，所有 LLM 请求已暂停；请核对并明确确认以下目标：
+                </p>
+                <ul className="space-y-1 rounded-md border border-amber-200 bg-white/70 p-2 font-mono text-xs">
+                  {confirmationTargets.map((target) => (
+                    <li key={target} className="break-all">{target}</li>
+                  ))}
+                </ul>
+                {confirmError && (
+                  <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">
+                    确认失败：{confirmError}
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleConfirmApiTarget}
+                  disabled={isSaving || confirmationTargets.length === 0}
+                  className="border-amber-400 bg-white hover:bg-amber-100"
+                >
+                  {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  确认使用以上 API 目标
+                </Button>
+              </div>
+            )}
+
             <PresetManager
               config={config}
               disabled={proxyStatus === 'running'}
@@ -597,7 +699,7 @@ const Service = () => {
                   onBlur={() => saveApiConfigToCurrentPreset('model_name', localModelName)}
                   apiUrl={localApiUrl}
                   apiKey={localApiKey}
-                  disabled={proxyStatus === 'running'}
+                  disabled={proxyStatus === 'running' || config?.api_target_confirmation_required}
                   placeholder="选择或输入模型名称"
                   className="flex-1"
                 />
@@ -762,7 +864,7 @@ const Service = () => {
               <div className="space-y-0.5">
                 <Label className="text-base font-medium">🌐 局域网开放</Label>
                 <p className="text-xs text-muted-foreground">
-                  开启后服务器绑定 0.0.0.0，允许局域网内其他设备（如手机、平板）通过本机 IP 访问。
+                  开启后仅 Ollama 兼容代理绑定 0.0.0.0，允许局域网设备访问；配置和管理 API 始终仅限本机。
                   <span className="text-amber-600 font-medium">修改后需重启代理服务器生效。</span>
                 </p>
               </div>
@@ -773,165 +875,6 @@ const Service = () => {
               />
             </div>
           </CardContent>
-        </Card>
-
-        <Card className="glass border-none shadow-custom col-span-2">
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600">
-                  <Network className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>Antigravity 自动化桥接（实验性功能）</CardTitle>
-                  <CardDescription>开启后将不再走 API，改为 UI 自动化桥接</CardDescription>
-                </div>
-              </div>
-              <Switch
-                checked={config?.antigravity_bridge_enabled || false}
-                onCheckedChange={(checked) => updateConfig('antigravity_bridge_enabled', checked)}
-                className="data-[state=checked]:bg-indigo-500"
-              />
-            </div>
-          </CardHeader>
-          {config?.antigravity_bridge_enabled && (
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>窗口标题关键字</Label>
-                <Input
-                  value={config?.antigravity_window_title || 'Antigravity'}
-                  onChange={(e) => updateConfig('antigravity_window_title', e.target.value)}
-                  className="bg-white/50"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label>桥接超时（毫秒）</Label>
-                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_timeout_ms ?? 60000} ms</span>
-                </div>
-                <Slider
-                  value={[config?.antigravity_timeout_ms ?? 60000]}
-                  onValueChange={([value]) => updateConfig('antigravity_timeout_ms', value)}
-                  min={5000}
-                  max={120000}
-                  step={1000}
-                  className="w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label>失败重试次数</Label>
-                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_max_retries ?? 0} 次</span>
-                </div>
-                <Slider
-                  value={[config?.antigravity_max_retries ?? 0]}
-                  onValueChange={([value]) => updateConfig('antigravity_max_retries', value)}
-                  min={0}
-                  max={3}
-                  step={1}
-                  className="w-full"
-                />
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
-                <div className="space-y-0.5">
-                  <Label>启用 pending/submit 显式降级</Label>
-                  <p className="text-xs text-muted-foreground">仅在内置 LS 桥接失败后，允许通过 /api/bridge/pending 与 /api/bridge/submit 回填。</p>
-                </div>
-                <Switch
-                  checked={config?.antigravity_pending_submit_fallback_enabled || false}
-                  onCheckedChange={(checked) => updateConfig('antigravity_pending_submit_fallback_enabled', checked)}
-                  className="data-[state=checked]:bg-indigo-500"
-                />
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
-                <div className="space-y-0.5">
-                  <Label>返回 AI 思考链</Label>
-                  <p className="text-xs text-muted-foreground">开启后回复中将包含 AI 的思考过程（用 &lt;thinking&gt; 标签包裹），关闭则只返回正文。</p>
-                </div>
-                <Switch
-                  checked={config?.antigravity_include_thinking || false}
-                  onCheckedChange={(checked) => updateConfig('antigravity_include_thinking', checked)}
-                  className="data-[state=checked]:bg-indigo-500"
-                />
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/50 border border-indigo-100">
-                <div className="space-y-0.5">
-                  <Label>🌊 流式传输</Label>
-                  <p className="text-xs text-muted-foreground">开启后桥接响应将实时流式返回，而不是等待完整回复。适合长文本生成场景。</p>
-                </div>
-                <Switch
-                  checked={config?.antigravity_stream_enabled || false}
-                  onCheckedChange={(checked) => updateConfig('antigravity_stream_enabled', checked)}
-                  className="data-[state=checked]:bg-indigo-500"
-                />
-              </div>
-              {config?.antigravity_stream_enabled && (
-                <div className="rounded-lg border border-indigo-100 p-3 bg-white/50 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label>⏱️ 流式输出速度</Label>
-                      <p className="text-xs text-muted-foreground">每个字符的输出间隔（ms），越小越快。</p>
-                    </div>
-                    <span className="text-sm font-mono font-medium text-indigo-600">{config?.antigravity_stream_char_delay || 20}ms</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={5}
-                    max={100}
-                    step={5}
-                    value={config?.antigravity_stream_char_delay || 20}
-                    onChange={(e) => updateConfig('antigravity_stream_char_delay', Number(e.target.value))}
-                    className="w-full h-2 bg-indigo-100 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>5ms (极快)</span>
-                    <span>50ms (适中)</span>
-                    <span>100ms (慢)</span>
-                  </div>
-                </div>
-              )}
-              {/* 桥接模型选择 */}
-              <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-2">
-                <div className="space-y-0.5">
-                  <Label>桥接模型</Label>
-                  <p className="text-xs text-muted-foreground">选择 Antigravity 桥接使用的 AI 模型。</p>
-                </div>
-                <select
-                  value={config?.antigravity_bridge_model_id || 'MODEL_PLACEHOLDER_M18'}
-                  onChange={(e) => updateConfig('antigravity_bridge_model_id', e.target.value)}
-                  className="w-full h-9 rounded-md border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  <option value="MODEL_PLACEHOLDER_M18">Gemini 3 Flash</option>
-                  <option value="MODEL_PLACEHOLDER_M36">Gemini 3.1 Pro (Low)</option>
-                  <option value="MODEL_PLACEHOLDER_M37">Gemini 3.1 Pro (High)</option>
-                  <option value="MODEL_PLACEHOLDER_M35">Claude Sonnet 4.6 (Thinking)</option>
-                  <option value="MODEL_PLACEHOLDER_M26">Claude Opus 4.6 (Thinking)</option>
-                  <option value="MODEL_OPENAI_GPT_OSS_120B_MEDIUM">GPT-OSS 120B (Medium)</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label>最大并发数</Label>
-                  <span className="text-sm font-medium text-indigo-600">{config?.antigravity_max_concurrent ?? 3}</span>
-                </div>
-                <Slider
-                  value={[config?.antigravity_max_concurrent ?? 3]}
-                  onValueChange={([value]) => updateConfig('antigravity_max_concurrent', value)}
-                  min={1}
-                  max={10}
-                  step={1}
-                  className="w-full"
-                />
-                <p className="text-xs text-muted-foreground">
-                  允许同时处理的最大请求数。每个请求创建独立会话，互不干扰。
-                </p>
-              </div>
-              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700 space-y-1">
-                <p>开启桥接后，/api/chat、/api/generate、/v1/chat/completions 会走内置 LS 桥接。</p>
-                <p>支持并发：每个请求创建独立 cascade 会话，通过 Semaphore 控制最大并发数。</p>
-              </div>
-            </CardContent>
-          )}
         </Card>
 
         <Card className="glass border-none shadow-custom col-span-2">
