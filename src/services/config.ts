@@ -7,9 +7,16 @@ import { apiClient } from './api';
 import type { Config, ApiResponse } from './types';
 
 // 本地存储键
-const CONFIG_CACHE_KEY = 'app_config_cache';
-const CONFIG_CACHE_TIMESTAMP_KEY = 'app_config_cache_timestamp';
+const CONFIG_CACHE_KEY = 'app_config_cache_v2';
+const CONFIG_CACHE_TIMESTAMP_KEY = 'app_config_cache_timestamp_v2';
 const CACHE_MAX_AGE = 5 * 60 * 1000; // 5分钟缓存有效期
+
+try {
+  localStorage.removeItem('app_config_cache');
+  localStorage.removeItem('app_config_cache_timestamp');
+} catch (e) {
+  console.warn('[Config] 清理旧版缓存失败:', e);
+}
 
 // 配置请求超时时间（缓存优先，超时可以短一些）
 const CONFIG_TIMEOUT = 2000; // 2秒
@@ -102,14 +109,25 @@ async function withRetry<T>(
  * 获取完整配置
  * 缓存优先策略：先返回缓存快速启动，后台静默刷新
  */
-export async function getConfig(): Promise<ApiResponse<Config>> {
+export async function getConfig(
+  options: { forceFresh?: boolean } = {},
+): Promise<ApiResponse<Config>> {
   const cached = getCachedConfig();
   
   // 后台获取最新配置的函数
   const fetchLatest = async (): Promise<ApiResponse<Config>> => {
     try {
       const response = await withRetry(
-        () => withTimeout(apiClient.get<Config>('/api/config'), CONFIG_TIMEOUT),
+        async () => {
+          const result = await withTimeout(
+            apiClient.get<Config>('/api/config'),
+            CONFIG_TIMEOUT,
+          );
+          if (!result.success) {
+            throw new Error(result.error || '配置加载失败');
+          }
+          return result;
+        },
         MAX_RETRIES
       );
       if (response.success && response.data) {
@@ -125,7 +143,7 @@ export async function getConfig(): Promise<ApiResponse<Config>> {
   };
 
   // 如果有缓存，立即返回缓存，后台静默刷新
-  if (cached) {
+  if (cached && !options.forceFresh) {
     fetchLatest().catch(() => {});
     return { success: true, data: cached };
   }
@@ -147,16 +165,12 @@ export async function getConfig(): Promise<ApiResponse<Config>> {
  */
 export async function updateConfig(
   config: Partial<Config>
-): Promise<ApiResponse<{ success: boolean }>> {
-  const response = await apiClient.put<{ success: boolean }>('/api/config', config);
+): Promise<ApiResponse<Config>> {
+  const response = await apiClient.put<Config>('/api/config', config);
   
   // 更新成功后清除缓存，让下次读取从服务器获取最新配置
-  if (response.success) {
-    // 同时更新本地缓存
-    const cached = getCachedConfig();
-    if (cached) {
-      setCachedConfig({ ...cached, ...config });
-    }
+  if (response.success && response.data) {
+    setCachedConfig(response.data);
   }
   
   return response;
@@ -168,7 +182,7 @@ export async function updateConfig(
 export async function updateConfigField<K extends keyof Config>(
   key: K,
   value: Config[K]
-): Promise<ApiResponse<{ success: boolean }>> {
+): Promise<ApiResponse<Config>> {
   return updateConfig({ [key]: value } as Partial<Config>);
 }
 

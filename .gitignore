@@ -78,12 +78,10 @@ src-tauri/target/
 # Local research and tooling artifacts (never ship)
 /.opencode/
 /.sisyphus/
-/antigravity-sdk-main/
 /Copilot
 /Kimi
 /Venice
 /Zen
-/antigravity示范.txt
 /model-image-support-research.md
 /verify-opencode-enhanced.ps1
 /实际.txt

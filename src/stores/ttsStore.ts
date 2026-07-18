@@ -27,7 +27,7 @@ interface TTSState {
   setCurrentInfo: (text: string | null, speaker?: string, emotion?: string) => void;
 
   // API 操作
-  testEngine: (engine: string, url?: string) => Promise<boolean>;
+  testEngine: (engine: 'gpt_sovits', url?: string) => Promise<boolean>;
   stopPlayback: () => Promise<void>;
   stopAll: () => Promise<void>;
   setVolume: (volume: number) => Promise<void>;

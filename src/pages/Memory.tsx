@@ -12,6 +12,7 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import * as memoryService from '@/services/memory';
 import type { HistoryCompressionConfig } from '@/services/types';
 import { open } from '@tauri-apps/plugin-dialog';
+import { Link } from 'react-router-dom';
 
 const normalizeHistoryCompression = (
   config: HistoryCompressionConfig,
@@ -105,6 +106,7 @@ const Memory = () => {
   const isLoading = useConfigLoading();
   const loadConfig = useConfigStore((state) => state.loadConfig);
   const updateConfig = useConfigStore((state) => state.updateConfig);
+  const updateConfigBatch = useConfigStore((state) => state.updateConfigBatch);
 
   // 从 memoryStore 获取全局状态（页面切换时不会丢失）
   const memoryStore = useMemoryStore();
@@ -113,8 +115,12 @@ const Memory = () => {
     isRefreshing, 
     isCompressing,
     refreshStatus: handleRefreshStatus,
-    compressAll: handleCompressAll,
+    compressAll,
   } = memoryStore;
+  const confirmationRequired = config?.api_target_confirmation_required ?? false;
+  const autoCompressionEnabled = config?.history_compression?.enabled
+    ?? config?.history_compression?.auto_compress
+    ?? false;
 
   // 本地编辑状态
   const [localSavePath, setLocalSavePath] = useState('');
@@ -204,12 +210,18 @@ const Memory = () => {
   // 切换自动压缩开关
   const handleAutoCompressToggle = useCallback((checked: boolean) => {
     if (!config?.history_compression) return;
+    if (checked && confirmationRequired) return;
     const updatedConfig = {
       ...normalizeHistoryCompression(config.history_compression),
       enabled: checked,
     };
-    updateConfig('history_compression', updatedConfig);
-  }, [config?.history_compression, updateConfig]);
+    void updateConfigBatch({ history_compression: updatedConfig });
+  }, [config?.history_compression, confirmationRequired, updateConfigBatch]);
+
+  const handleCompressAll = useCallback(async () => {
+    if (confirmationRequired) return;
+    await compressAll();
+  }, [compressAll, confirmationRequired]);
 
   // 浏览选择存档目录
   const handleBrowseSavePath = async () => {
@@ -242,6 +254,15 @@ const Memory = () => {
         <h2 className="text-3xl font-bold bg-gradient-to-r from-pink-500 to-purple-600 bg-clip-text text-transparent">记忆管理</h2>
         <p className="text-muted-foreground mt-2">配置对话历史的自动压缩策略，防止上下文溢出。</p>
       </div>
+
+      {confirmationRequired && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
+          <span>API 目标已变更或旧版桥接已移除。确认全部目标前，手动和自动记忆压缩均已暂停。</span>
+          <Button asChild size="sm" variant="outline" className="shrink-0 border-amber-400 bg-white hover:bg-amber-100">
+            <Link to="/">前往服务页确认</Link>
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-12 gap-6">
         {/* Left Column: Configuration */}
@@ -319,12 +340,17 @@ const Memory = () => {
                     <div className="flex items-center space-x-2 bg-white/40 p-2 rounded-lg border border-white/50">
                        <Switch
                          id="auto-compress"
-                         checked={config?.history_compression?.enabled ?? config?.history_compression?.auto_compress ?? false}
+                         checked={autoCompressionEnabled}
                          onCheckedChange={handleAutoCompressToggle}
+                         disabled={confirmationRequired && !autoCompressionEnabled}
                        />
                        <div className="space-y-0.5">
                           <Label htmlFor="auto-compress" className="cursor-pointer text-red-600 font-medium">自动压缩 (Auto Compress)</Label>
-                          <p className="text-[10px] text-muted-foreground">触发阈值时自动执行，否则需手动操作</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {confirmationRequired
+                              ? '确认 API URL 前暂停；若此前已开启，仍可在此关闭'
+                              : '触发阈值时自动执行，否则需手动操作'}
+                          </p>
                        </div>
                     </div>
                  </div>
@@ -424,7 +450,7 @@ const Memory = () => {
                     <Button
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                       onClick={handleCompressAll}
-                      disabled={isCompressing || characterStatuses.filter(s => s.needs_compression).length === 0}
+                      disabled={confirmationRequired || isCompressing || characterStatuses.filter(s => s.needs_compression).length === 0}
                     >
                        {isCompressing ? (
                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />

@@ -6,14 +6,14 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::models::character::{
-    CharacterConfig, CharacterInfo, EmotionConfig,
-    SpeakerType, guess_gender_from_name,
+    guess_gender_from_name, CharacterConfig, CharacterInfo, EmotionConfig, SpeakerType,
 };
+use crate::services::atomic_file;
 
 /// 角色配置管理器
 ///
@@ -21,6 +21,8 @@ use crate::models::character::{
 pub struct CharacterManager {
     /// 配置文件目录
     config_dir: PathBuf,
+    /// 串行化角色写操作，避免多把内部锁交叉获取和文件提交乱序
+    mutation_lock: Mutex<()>,
     /// 角色配置映射 {character_id: CharacterConfig}
     characters: RwLock<HashMap<String, CharacterConfig>>,
     /// 别名映射 {alias_lowercase: character_id}
@@ -34,10 +36,24 @@ pub struct CharacterManager {
 }
 
 impl CharacterManager {
+    fn validate_character_id(character_id: &str) -> Result<(), String> {
+        let valid = !character_id.is_empty()
+            && character_id.len() <= 128
+            && character_id
+                .chars()
+                .all(|character| character.is_alphanumeric() || matches!(character, '_' | '-'));
+        if valid {
+            Ok(())
+        } else {
+            Err("角色 ID 只能包含字母、数字、下划线或连字符，且长度不能超过 128".to_string())
+        }
+    }
+
     /// 创建新的角色管理器
     pub fn new<P: AsRef<Path>>(config_dir: P) -> Self {
         Self {
             config_dir: config_dir.as_ref().to_path_buf(),
+            mutation_lock: Mutex::new(()),
             characters: RwLock::new(HashMap::new()),
             alias_map: RwLock::new(HashMap::new()),
             default_character_id: RwLock::new(None),
@@ -62,6 +78,13 @@ impl CharacterManager {
 
     /// 加载所有角色配置
     pub fn load_all_characters(&self) -> bool {
+        let _mutation = match self.mutation_lock.lock() {
+            Ok(lock) => lock,
+            Err(_) => {
+                error!("角色变更锁已损坏");
+                return false;
+            }
+        };
         if !self.config_dir.exists() {
             warn!("角色配置目录不存在: {:?}", self.config_dir);
             if let Err(e) = fs::create_dir_all(&self.config_dir) {
@@ -73,7 +96,7 @@ impl CharacterManager {
 
         let mut characters = self.characters.write().unwrap();
         let mut alias_map = self.alias_map.write().unwrap();
-        
+
         characters.clear();
         alias_map.clear();
 
@@ -81,7 +104,8 @@ impl CharacterManager {
             Ok(entries) => entries
                 .filter_map(|e| e.ok())
                 .filter(|e| {
-                    e.path().extension()
+                    e.path()
+                        .extension()
                         .map(|ext| ext == "json")
                         .unwrap_or(false)
                 })
@@ -106,12 +130,12 @@ impl CharacterManager {
             match self.load_character_file(&filepath) {
                 Ok(character) => {
                     let char_id = character.character_id.clone();
-                    
+
                     for alias in &character.name_aliases {
                         alias_map.insert(alias.to_lowercase(), char_id.clone());
                     }
                     alias_map.insert(character.name.to_lowercase(), char_id.clone());
-                    
+
                     if first_character_id.is_none() {
                         first_character_id = Some(char_id.clone());
                     }
@@ -142,11 +166,10 @@ impl CharacterManager {
 
     /// 加载单个角色配置文件
     fn load_character_file(&self, filepath: &Path) -> Result<CharacterConfig, String> {
-        let content = fs::read_to_string(filepath)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
-        
-        let data: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("JSON 解析失败: {}", e))?;
+        let content = fs::read_to_string(filepath).map_err(|e| format!("读取文件失败: {}", e))?;
+
+        let data: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("JSON 解析失败: {}", e))?;
 
         let required_fields = ["character_id", "name", "gender", "ref_audio_dir"];
         for field in required_fields {
@@ -158,41 +181,75 @@ impl CharacterManager {
         let mut emotions = HashMap::new();
         if let Some(emotions_obj) = data.get("available_emotions").and_then(|v| v.as_object()) {
             for (emotion_id, emotion_data) in emotions_obj {
-                emotions.insert(emotion_id.clone(), EmotionConfig {
-                    emotion_id: emotion_id.clone(),
-                    file: emotion_data.get("file")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    prompt: emotion_data.get("prompt")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    keywords: emotion_data.get("keywords")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect())
-                        .unwrap_or_default(),
-                });
+                emotions.insert(
+                    emotion_id.clone(),
+                    EmotionConfig {
+                        emotion_id: emotion_id.clone(),
+                        file: emotion_data
+                            .get("file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        prompt: emotion_data
+                            .get("prompt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        keywords: emotion_data
+                            .get("keywords")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    },
+                );
             }
         }
 
-        let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let name_aliases = data.get("name_aliases")
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let name_aliases = data
+            .get("name_aliases")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_else(|| vec![name.clone()]);
 
+        let character_id = data
+            .get("character_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Self::validate_character_id(&character_id)?;
+
         Ok(CharacterConfig {
-            character_id: data.get("character_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            character_id,
             name,
             name_aliases,
-            gender: data.get("gender").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            ref_audio_dir: data.get("ref_audio_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            description: data.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            gender: data
+                .get("gender")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            ref_audio_dir: data
+                .get("ref_audio_dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            description: data
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             available_emotions: emotions,
         })
     }
@@ -216,7 +273,7 @@ impl CharacterManager {
 
         let alias_map = self.alias_map.read().unwrap();
         let speaker_lower = speaker.to_lowercase();
-        
+
         if let Some(char_id) = alias_map.get(&speaker_lower) {
             return characters.get(char_id).cloned();
         }
@@ -233,18 +290,18 @@ impl CharacterManager {
     /// 根据别名获取角色配置
     pub fn get_character_by_alias(&self, alias: &str) -> Option<CharacterConfig> {
         self.ensure_loaded();
-        let alias_map = self.alias_map.read().unwrap();
         let alias_lower = alias.to_lowercase();
-        
-        if let Some(char_id) = alias_map.get(&alias_lower) {
-            let characters = self.characters.read().unwrap();
-            return characters.get(char_id).cloned();
-        }
-        None
+        let char_id = self.alias_map.read().unwrap().get(&alias_lower).cloned()?;
+
+        self.characters.read().unwrap().get(&char_id).cloned()
     }
 
     /// 获取后备角色
-    pub fn get_fallback_character(&self, speaker: &str, fallback_gender: Option<&str>) -> Option<CharacterConfig> {
+    pub fn get_fallback_character(
+        &self,
+        speaker: &str,
+        fallback_gender: Option<&str>,
+    ) -> Option<CharacterConfig> {
         self.ensure_loaded();
         let characters = self.characters.read().unwrap();
 
@@ -277,7 +334,8 @@ impl CharacterManager {
     /// 获取默认角色
     pub fn get_default_character(&self) -> Option<CharacterConfig> {
         self.ensure_loaded();
-        let default_id = self.default_character_id.read().unwrap();
+        // 先复制 ID 再取角色表，避免与加载路径（角色表 -> 默认 ID）锁序反转。
+        let default_id = self.default_character_id.read().unwrap().clone();
         let characters = self.characters.read().unwrap();
 
         if let Some(id) = default_id.as_ref() {
@@ -292,7 +350,8 @@ impl CharacterManager {
     /// 获取当前选中的角色
     pub fn get_current_character(&self) -> Option<CharacterConfig> {
         self.ensure_loaded();
-        let current_id = self.current_character_id.read().unwrap();
+        // 先复制 ID 再取角色表，避免与加载路径（角色表 -> 当前 ID）锁序反转。
+        let current_id = self.current_character_id.read().unwrap().clone();
         let characters = self.characters.read().unwrap();
 
         if let Some(id) = current_id.as_ref() {
@@ -301,7 +360,6 @@ impl CharacterManager {
             }
         }
 
-        drop(current_id);
         drop(characters);
         self.get_default_character()
     }
@@ -343,10 +401,12 @@ impl CharacterManager {
         let characters = self.characters.read().unwrap();
         let current_id = self.current_character_id.read().unwrap();
 
-        characters.values()
+        characters
+            .values()
             .map(|char| {
                 let mut info = CharacterInfo::from(char);
-                info.is_current = current_id.as_ref()
+                info.is_current = current_id
+                    .as_ref()
                     .map(|id| id == &char.character_id)
                     .unwrap_or(false);
                 info
@@ -363,72 +423,99 @@ impl CharacterManager {
 
     /// 添加角色
     pub fn add_character(&self, config: CharacterConfig) -> Result<(), String> {
-        let mut characters = self.characters.write().unwrap();
-        let mut alias_map = self.alias_map.write().unwrap();
-
-        if characters.contains_key(&config.character_id) {
+        Self::validate_character_id(&config.character_id)?;
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "角色变更锁已损坏".to_string())?;
+        if self
+            .characters
+            .read()
+            .unwrap()
+            .contains_key(&config.character_id)
+        {
             return Err(format!("角色 ID 已存在: {}", config.character_id));
         }
 
+        let char_id = config.character_id.clone();
+        let char_name = config.name.clone();
+        let content =
+            serde_json::to_string_pretty(&config).map_err(|e| format!("序列化失败: {}", e))?;
+        self.save_character_content_to_file(&char_id, &content)?;
+
+        let mut characters = self.characters.write().unwrap();
+        let mut alias_map = self.alias_map.write().unwrap();
         for alias in &config.name_aliases {
             alias_map.insert(alias.to_lowercase(), config.character_id.clone());
         }
         alias_map.insert(config.name.to_lowercase(), config.character_id.clone());
-
-        let char_id = config.character_id.clone();
-        let char_name = config.name.clone();
-        characters.insert(char_id.clone(), config);
-
-        self.save_character_to_file(&char_id)?;
+        characters.insert(char_id, config);
 
         info!("添加角色: {}", char_name);
         Ok(())
     }
 
     /// 更新角色
-    pub fn update_character(&self, character_id: &str, updates: crate::models::character::UpdateCharacterRequest) -> Result<(), String> {
-        let mut characters = self.characters.write().unwrap();
-        let mut alias_map = self.alias_map.write().unwrap();
-
-        let char = characters.get_mut(character_id)
+    pub fn update_character(
+        &self,
+        character_id: &str,
+        updates: crate::models::character::UpdateCharacterRequest,
+    ) -> Result<(), String> {
+        Self::validate_character_id(character_id)?;
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "角色变更锁已损坏".to_string())?;
+        let mut updated = self
+            .characters
+            .read()
+            .unwrap()
+            .get(character_id)
+            .cloned()
             .ok_or_else(|| format!("角色不存在: {}", character_id))?;
 
-        if let Some(old_name) = updates.name.as_ref() {
-            alias_map.remove(&char.name.to_lowercase());
-            alias_map.insert(old_name.to_lowercase(), character_id.to_string());
-            char.name = old_name.clone();
+        if let Some(name) = updates.name {
+            updated.name = name;
         }
 
         if let Some(gender) = updates.gender {
-            char.gender = gender;
+            updated.gender = gender;
         }
 
         if let Some(ref_audio_dir) = updates.ref_audio_dir {
-            char.ref_audio_dir = ref_audio_dir;
+            updated.ref_audio_dir = ref_audio_dir;
         }
 
         if let Some(description) = updates.description {
-            char.description = description;
+            updated.description = description;
         }
 
         if let Some(name_aliases) = updates.name_aliases {
-            for alias in &char.name_aliases {
-                alias_map.remove(&alias.to_lowercase());
-            }
-            for alias in &name_aliases {
-                alias_map.insert(alias.to_lowercase(), character_id.to_string());
-            }
-            char.name_aliases = name_aliases;
+            updated.name_aliases = name_aliases;
         }
 
         if let Some(available_emotions) = updates.available_emotions {
-            char.available_emotions = available_emotions;
+            updated.available_emotions = available_emotions;
         }
 
-        drop(characters);
-        drop(alias_map);
-        
-        self.save_character_to_file(character_id)?;
+        let content =
+            serde_json::to_string_pretty(&updated).map_err(|e| format!("序列化失败: {}", e))?;
+        self.save_character_content_to_file(character_id, &content)?;
+
+        let mut characters = self.characters.write().unwrap();
+        let mut alias_map = self.alias_map.write().unwrap();
+        let previous = characters
+            .get(character_id)
+            .ok_or_else(|| format!("角色不存在: {}", character_id))?;
+        for alias in &previous.name_aliases {
+            alias_map.remove(&alias.to_lowercase());
+        }
+        alias_map.remove(&previous.name.to_lowercase());
+        for alias in &updated.name_aliases {
+            alias_map.insert(alias.to_lowercase(), character_id.to_string());
+        }
+        alias_map.insert(updated.name.to_lowercase(), character_id.to_string());
+        characters.insert(character_id.to_string(), updated);
 
         info!("更新角色: {}", character_id);
         Ok(())
@@ -436,38 +523,44 @@ impl CharacterManager {
 
     /// 删除角色
     pub fn delete_character(&self, character_id: &str) -> Result<(), String> {
-        let mut characters = self.characters.write().unwrap();
-        let mut alias_map = self.alias_map.write().unwrap();
-
-        let char = characters.remove(character_id)
+        Self::validate_character_id(character_id)?;
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "角色变更锁已损坏".to_string())?;
+        let char = self
+            .characters
+            .read()
+            .unwrap()
+            .get(character_id)
+            .cloned()
             .ok_or_else(|| format!("角色不存在: {}", character_id))?;
 
+        let filepath = self.config_dir.join(format!("{}.json", character_id));
+        if filepath.exists() {
+            fs::remove_file(&filepath).map_err(|e| format!("删除配置文件失败: {}", e))?;
+        }
+
+        let mut characters = self.characters.write().unwrap();
+        let mut alias_map = self.alias_map.write().unwrap();
+        characters.remove(character_id);
         for alias in &char.name_aliases {
             alias_map.remove(&alias.to_lowercase());
         }
         alias_map.remove(&char.name.to_lowercase());
 
-        let filepath = self.config_dir.join(format!("{}.json", character_id));
-        if filepath.exists() {
-            fs::remove_file(&filepath)
-                .map_err(|e| format!("删除配置文件失败: {}", e))?;
-        }
-
         info!("删除角色: {}", character_id);
         Ok(())
     }
 
-    /// 保存角色到文件
-    fn save_character_to_file(&self, character_id: &str) -> Result<(), String> {
-        let characters = self.characters.read().unwrap();
-        let char = characters.get(character_id)
-            .ok_or_else(|| format!("角色不存在: {}", character_id))?;
-
+    fn save_character_content_to_file(
+        &self,
+        character_id: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        Self::validate_character_id(character_id)?;
         let filepath = self.config_dir.join(format!("{}.json", character_id));
-        let content = serde_json::to_string_pretty(char)
-            .map_err(|e| format!("序列化失败: {}", e))?;
-
-        fs::write(&filepath, content)
+        atomic_file::write(&filepath, content.as_bytes())
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
         debug!("保存角色配置: {:?}", filepath);
@@ -505,6 +598,11 @@ impl Default for CharacterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        sync::{mpsc, Arc},
+        time::Duration,
+    };
+    use tempfile::tempdir;
 
     #[test]
     fn test_speaker_type() {
@@ -513,13 +611,58 @@ mod tests {
         assert_eq!(SpeakerType::from_speaker("player"), SpeakerType::Player);
         assert_eq!(SpeakerType::from_speaker("玩家"), SpeakerType::Player);
         assert_eq!(SpeakerType::from_speaker("system"), SpeakerType::System);
-        assert_eq!(SpeakerType::from_speaker("SomeCharacter"), SpeakerType::Unknown);
+        assert_eq!(
+            SpeakerType::from_speaker("SomeCharacter"),
+            SpeakerType::Unknown
+        );
     }
 
     #[test]
     fn test_guess_gender() {
-        assert_eq!(guess_gender_from_name("女仆小姐"), Some("female".to_string()));
+        assert_eq!(
+            guess_gender_from_name("女仆小姐"),
+            Some("female".to_string())
+        );
         assert_eq!(guess_gender_from_name("骑士大人"), Some("male".to_string()));
         assert_eq!(guess_gender_from_name("某角色"), None);
+    }
+
+    #[test]
+    fn add_character_does_not_reenter_character_lock() {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(CharacterManager::new(dir.path()));
+        let worker = Arc::clone(&manager);
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let result = worker.add_character(CharacterConfig {
+                character_id: "lock-test".to_string(),
+                name: "Lock Test".to_string(),
+                name_aliases: vec!["lock-test".to_string()],
+                gender: "neutral".to_string(),
+                ref_audio_dir: String::new(),
+                description: String::new(),
+                available_emotions: HashMap::new(),
+            });
+            let _ = tx.send(result);
+        });
+
+        let result = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("add_character timed out, likely due to lock re-entry");
+        result.unwrap();
+        assert!(dir.path().join("lock-test.json").exists());
+        assert_eq!(manager.character_count(), 1);
+    }
+
+    #[test]
+    fn character_id_rejects_path_traversal() {
+        for invalid in ["", "..", "../escape", "folder\\escape", "name.json"] {
+            assert!(
+                CharacterManager::validate_character_id(invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        assert!(CharacterManager::validate_character_id("角色_01-test").is_ok());
     }
 }

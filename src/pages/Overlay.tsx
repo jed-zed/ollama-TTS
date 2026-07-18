@@ -126,6 +126,7 @@ const Overlay: React.FC = () => {
 
   const [streamContent, setStreamContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const streamContentRef = useRef('');
 
   const [history, setHistory] = useState<Array<{ id: string; content: string; speaker?: string; timestamp: number }>>([]);
 
@@ -197,9 +198,27 @@ const Overlay: React.FC = () => {
   useEffect(() => {
     if (!isTauri()) return;
 
+    let disposed = false;
     const unsubscribers: Array<() => void> = [];
 
-    subtitleWindow.onConfigUpdate((newConfig) => {
+    const register = async (
+      subscription: Promise<() => void>,
+      onRegistered?: () => void,
+    ) => {
+      try {
+        const unsubscribe = await subscription;
+        if (disposed) {
+          unsubscribe();
+          return;
+        }
+        unsubscribers.push(unsubscribe);
+        onRegistered?.();
+      } catch (error) {
+        console.warn('[Overlay] Failed to register window listener:', error);
+      }
+    };
+
+    void register(subtitleWindow.onConfigUpdate((newConfig) => {
       setConfig(prev => ({
         ...prev,
         opacity: typeof newConfig.subtitle_opacity === 'number'
@@ -236,34 +255,44 @@ const Overlay: React.FC = () => {
           ? newConfig.subtitle_hide_controls
           : prev.hideControls,
       }));
-    }).then(unsub => unsubscribers.push(unsub));
+    }));
 
-    subtitleWindow.onContentUpdate((content) => {
-      setStreamContent(content.text);
+    void register(subtitleWindow.onContentUpdate((content) => {
+      const nextText = content.reset || content.text !== undefined
+        ? content.text ?? ''
+        : streamContentRef.current + (content.delta ?? '');
+
+      streamContentRef.current = nextText;
+      setStreamContent(nextText);
       setIsStreaming(content.isStreaming);
       setIsUserSent(false);
       if (content.isStreaming) {
         setSelectedHistoryId(null);
       }
 
-      if (content.text && !content.isStreaming) {
+      if (content.final && nextText) {
         setHistory(prev => {
           const newItem = {
             id: Date.now().toString(),
-            content: content.text,
+            content: nextText,
             speaker: content.speaker,
             timestamp: Date.now(),
           };
           return [newItem, ...prev].slice(0, 20);
         });
       }
-    }).then(unsub => unsubscribers.push(unsub));
+    }), () => {
+      void subtitleWindow.requestContentSync().catch((error) => {
+        console.warn('[Overlay] Failed to request content snapshot:', error);
+      });
+    });
 
-    subtitleWindow.onHide(() => {
+    void register(subtitleWindow.onHide(() => {
       handleCloseRef.current();
-    }).then(unsub => unsubscribers.push(unsub));
+    }));
 
     return () => {
+      disposed = true;
       unsubscribers.forEach(unsub => unsub());
     };
   }, []);
@@ -532,14 +561,16 @@ const Overlay: React.FC = () => {
 
   const handleSend = useCallback(() => {
     if (inputText.trim()) {
+      const nextText = inputText.trim();
       setIsUserSent(true);
-      setStreamContent(inputText.trim());
-      navigator.clipboard.writeText(inputText.trim());
+      streamContentRef.current = nextText;
+      setStreamContent(nextText);
+      navigator.clipboard.writeText(nextText);
       setInputText('');
 
       setHistory(prev => [{
         id: Date.now().toString(),
-        content: inputText.trim(),
+        content: nextText,
         timestamp: Date.now(),
       }, ...prev].slice(0, 20));
     }
@@ -597,6 +628,7 @@ const Overlay: React.FC = () => {
 
   const handleClear = useCallback(() => {
     resetTypewriter();
+    streamContentRef.current = '';
     setStreamContent('');
   }, [resetTypewriter]);
 

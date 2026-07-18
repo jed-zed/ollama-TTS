@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import type { StreamMessage, StreamEvent, ConnectionStatus } from '../services/types';
 import * as streamService from '../services/stream';
 import { subtitleWindow, isTauri } from '../services/tauri';
+import { subtitleStreamBridge } from '../services/subtitleStreamBridge';
 import { MAX_HISTORY_SIZE, MIN_CONTENT_LENGTH } from '@/lib/constants';
 import { useConfigStore } from './configStore';
 
@@ -57,15 +58,20 @@ const saveHistoryToStorage = (history: StreamMessage[]) => {
   }
 };
 
-// 发送内容更新到独立窗口
-const emitContentToOverlay = (text: string, speaker: string | null, isStreaming: boolean) => {
-  if (isTauri()) {
-    subtitleWindow.emitContentUpdate({
-      text,
-      speaker: speaker ?? undefined,
-      isStreaming,
-    });
-  }
+interface OverlayEmitOptions {
+  forceSnapshot?: boolean;
+  final?: boolean;
+  boundary?: boolean;
+}
+
+// 内容在主窗口保留全量状态，桥接层负责按帧合并并向独立窗口发送增量。
+const emitContentToOverlay = (
+  text: string,
+  speaker: string | null,
+  isStreaming: boolean,
+  options?: OverlayEmitOptions,
+) => {
+  subtitleStreamBridge.publish(text, speaker, isStreaming, options);
 };
 
 interface StreamState {
@@ -100,6 +106,7 @@ interface StreamState {
   setSubtitleVisible: (visible: boolean) => void;
   showSubtitle: (force?: boolean) => void;
   hideSubtitle: () => void;
+  syncContentToOverlay: () => void;
 
   // 历史操作
   addToHistory: (message: StreamMessage) => void;
@@ -138,7 +145,11 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }),
 
   setContent: (text) => {
-    emitContentToOverlay(text, null, false);
+    emitContentToOverlay(text, null, false, {
+      forceSnapshot: true,
+      final: Boolean(text),
+      boundary: true,
+    });
     set({
       currentContent: text,
       isStreaming: false,
@@ -151,13 +162,18 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       currentEmotion: emotion ?? null,
     }),
 
-  clearCurrent: () =>
+  clearCurrent: () => {
+    emitContentToOverlay('', null, false, {
+      forceSnapshot: true,
+      boundary: true,
+    });
     set({
       currentContent: '',
       currentSpeaker: null,
       currentEmotion: null,
       isStreaming: false,
-    }),
+    });
+  },
 
   finishStream: () => {
     const state = get();
@@ -165,7 +181,12 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       return;
     }
 
-    if (state.currentContent && state.currentContent.length > MIN_CONTENT_LENGTH) {
+    const shouldArchive = state.currentContent.length > MIN_CONTENT_LENGTH;
+    emitContentToOverlay(state.currentContent, state.currentSpeaker, false, {
+      final: shouldArchive,
+    });
+
+    if (shouldArchive) {
       const message: StreamMessage = {
         id: createMessageId(),
         content: state.currentContent,
@@ -173,7 +194,6 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         emotion: state.currentEmotion ?? undefined,
         timestamp: Date.now(),
       };
-      emitContentToOverlay(state.currentContent, state.currentSpeaker, false);
       set((s) => {
         const newHistory = [...s.history, message].slice(-MAX_HISTORY_SIZE);
         saveHistoryToStorage(newHistory);
@@ -207,6 +227,14 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       subtitleWindow.hide();
     }
     set({ subtitleVisible: false });
+  },
+  syncContentToOverlay: () => {
+    const state = get();
+    subtitleStreamBridge.sync(
+      state.currentContent,
+      state.currentSpeaker,
+      state.isStreaming,
+    );
   },
 
   addToHistory: (message) =>
@@ -280,7 +308,10 @@ export const useStreamStore = create<StreamState>((set, get) => ({
             subtitleVisible: shouldAutoShow ? true : state.subtitleVisible,
           });
         }
-        emitContentToOverlay('', newSpeaker, true);
+        emitContentToOverlay('', newSpeaker, true, {
+          forceSnapshot: true,
+          boundary: true,
+        });
         break;
       }
 
@@ -290,11 +321,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
           state.showSubtitle();
         }
         if (event.data.full_content !== undefined) {
-          emitContentToOverlay(event.data.full_content, state.currentSpeaker, true);
+          const snapshotStreaming = event.data.is_streaming ?? true;
+          const nextSpeaker = event.data.speaker ?? state.currentSpeaker;
+          emitContentToOverlay(event.data.full_content, nextSpeaker, snapshotStreaming, {
+            forceSnapshot: true,
+            final: !snapshotStreaming && event.data.full_content.length > MIN_CONTENT_LENGTH,
+          });
           set({
             currentContent: event.data.full_content,
-            isStreaming: true,
-            subtitleVisible: shouldAutoShow ? true : state.subtitleVisible,
+            isStreaming: snapshotStreaming,
+            subtitleVisible: snapshotStreaming && shouldAutoShow ? true : state.subtitleVisible,
           });
         } else if (event.data.content) {
           set((s) => {

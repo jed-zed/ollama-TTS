@@ -1,19 +1,17 @@
 //! 代理控制 API
-//! 
+//!
 //! 提供代理服务的状态查询和控制接口。
 
-use axum::{
-    extract::State,
-    Json,
-};
-use serde::{Deserialize, Serialize};
-use tracing::{info, error};
+use axum::{extract::State, Json};
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use tracing::{error, info};
 
-use crate::server::AppState;
 use crate::api::config::ApiResponse;
-use crate::services::llm_client::LlmClient;
-use crate::services::sse_broadcaster::{SseBroadcaster, LogEvent};
+use crate::server::AppState;
+use crate::services::llm_client::{extract_stream_content, LlmClient};
+use crate::services::sse_broadcaster::{LogEvent, SseBroadcaster};
+use crate::services::wire_stream::{WireEvent, WireStreamDecoder};
 
 fn broadcast_log(broadcaster: &SseBroadcaster, level: &str, message: &str) {
     let event = LogEvent {
@@ -65,14 +63,12 @@ pub struct StopProxyResponse {
 }
 
 /// 获取代理状态
-/// 
+///
 /// GET /api/proxy/status
-pub async fn get_proxy_status(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<ProxyStatus>> {
+pub async fn get_proxy_status(State(state): State<AppState>) -> Json<ApiResponse<ProxyStatus>> {
     let config = state.config_store.get();
     let is_running = state.proxy_manager.is_running();
-    
+
     let status = ProxyStatus {
         running: is_running,
         main_port: config.main_api_port,
@@ -80,23 +76,25 @@ pub async fn get_proxy_status(
         api_configured: !config.api_url.is_empty(),
         last_test_result: None,
     };
-    
+
     Json(ApiResponse::success(status))
 }
 
 /// 启动代理服务器
-/// 
+///
 /// POST /api/proxy/start
-pub async fn start_proxy(
-    State(state): State<AppState>,
-) -> Json<StartProxyResponse> {
+pub async fn start_proxy(State(state): State<AppState>) -> Json<StartProxyResponse> {
     info!("Starting proxy server via API...");
     broadcast_log(&state.broadcaster, "INFO", "正在启动代理服务器...");
-    
+
     match state.proxy_manager.start().await {
         Ok(()) => {
             info!("Proxy server started successfully");
-            broadcast_log(&state.broadcaster, "SUCCESS", "代理服务器启动成功 (端口 11434)");
+            broadcast_log(
+                &state.broadcaster,
+                "SUCCESS",
+                "代理服务器启动成功 (端口 11434)",
+            );
             Json(StartProxyResponse {
                 success: true,
                 port: Some(11434),
@@ -105,7 +103,11 @@ pub async fn start_proxy(
         }
         Err(e) => {
             error!("Failed to start proxy server: {}", e);
-            broadcast_log(&state.broadcaster, "ERROR", &format!("代理服务器启动失败: {}", e));
+            broadcast_log(
+                &state.broadcaster,
+                "ERROR",
+                &format!("代理服务器启动失败: {}", e),
+            );
             Json(StartProxyResponse {
                 success: false,
                 port: None,
@@ -116,14 +118,12 @@ pub async fn start_proxy(
 }
 
 /// 停止代理服务器
-/// 
+///
 /// POST /api/proxy/stop
-pub async fn stop_proxy(
-    State(state): State<AppState>,
-) -> Json<StopProxyResponse> {
+pub async fn stop_proxy(State(state): State<AppState>) -> Json<StopProxyResponse> {
     info!("Stopping proxy server via API...");
     broadcast_log(&state.broadcaster, "INFO", "正在停止代理服务器...");
-    
+
     match state.proxy_manager.stop().await {
         Ok(()) => {
             info!("Proxy server stopped successfully");
@@ -135,7 +135,11 @@ pub async fn stop_proxy(
         }
         Err(e) => {
             error!("Failed to stop proxy server: {}", e);
-            broadcast_log(&state.broadcaster, "ERROR", &format!("代理服务器停止失败: {}", e));
+            broadcast_log(
+                &state.broadcaster,
+                "ERROR",
+                &format!("代理服务器停止失败: {}", e),
+            );
             Json(StopProxyResponse {
                 success: false,
                 error: Some(e),
@@ -145,16 +149,14 @@ pub async fn stop_proxy(
 }
 
 /// 测试代理连接
-/// 
+///
 /// POST /api/proxy/test
-pub async fn test_proxy(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<TestResult>> {
+pub async fn test_proxy(State(state): State<AppState>) -> Json<ApiResponse<TestResult>> {
     info!("测试代理连接...");
     broadcast_log(&state.broadcaster, "INFO", "正在测试API连接...");
-    
+
     let config = state.config_store.get();
-    
+
     if config.api_url.is_empty() {
         broadcast_log(&state.broadcaster, "WARN", "API URL 未配置");
         return Json(ApiResponse::success(TestResult {
@@ -163,18 +165,30 @@ pub async fn test_proxy(
             latency_ms: None,
         }));
     }
-    
-    broadcast_log(&state.broadcaster, "DEBUG", &format!("API URL: {}", config.api_url));
-    
-    let client = LlmClient::new(config.api_url.clone(), config.api_key.clone());
-    
+
+    broadcast_log(
+        &state.broadcaster,
+        "DEBUG",
+        &format!("API URL: {}", config.api_url),
+    );
+
+    let client = LlmClient::new(
+        config.api_url.clone(),
+        config.api_key.clone(),
+        state.config_store.api_target_confirmation_guard(),
+    );
+
     let start = std::time::Instant::now();
-    
+
     match client.test_connection().await {
         Ok(()) => {
             let latency = start.elapsed().as_millis() as u64;
             info!("代理测试成功, 延迟: {}ms", latency);
-            broadcast_log(&state.broadcaster, "SUCCESS", &format!("API连接测试成功, 延迟: {}ms", latency));
+            broadcast_log(
+                &state.broadcaster,
+                "SUCCESS",
+                &format!("API连接测试成功, 延迟: {}ms", latency),
+            );
             Json(ApiResponse::success(TestResult {
                 success: true,
                 message: "连接成功".to_string(),
@@ -183,7 +197,11 @@ pub async fn test_proxy(
         }
         Err(e) => {
             error!("代理测试失败: {}", e);
-            broadcast_log(&state.broadcaster, "ERROR", &format!("API连接测试失败: {}", e));
+            broadcast_log(
+                &state.broadcaster,
+                "ERROR",
+                &format!("API连接测试失败: {}", e),
+            );
             Json(ApiResponse::success(TestResult {
                 success: false,
                 message: e,
@@ -214,7 +232,7 @@ pub struct StreamTestResult {
 }
 
 /// 流式测试
-/// 
+///
 /// POST /api/proxy/test-stream
 pub async fn test_stream(
     State(state): State<AppState>,
@@ -222,9 +240,9 @@ pub async fn test_stream(
 ) -> Json<ApiResponse<StreamTestResult>> {
     info!("测试流式连接...");
     broadcast_log(&state.broadcaster, "INFO", "正在测试流式连接...");
-    
+
     let config = state.config_store.get();
-    
+
     if config.api_url.is_empty() {
         broadcast_log(&state.broadcaster, "WARN", "API URL 未配置");
         return Json(ApiResponse::success(StreamTestResult {
@@ -234,58 +252,89 @@ pub async fn test_stream(
             latency_ms: None,
         }));
     }
-    
-    broadcast_log(&state.broadcaster, "DEBUG", &format!("测试模型: {}", config.model_name));
-    
-    let client = LlmClient::new(config.api_url.clone(), config.api_key.clone());
-    
+
+    broadcast_log(
+        &state.broadcaster,
+        "DEBUG",
+        &format!("测试模型: {}", config.model_name),
+    );
+
+    let client = LlmClient::new(
+        config.api_url.clone(),
+        config.api_key.clone(),
+        state.config_store.api_target_confirmation_guard(),
+    );
+
     let chat_request = crate::services::llm_client::ChatRequest {
         model: config.model_name.clone(),
-        messages: vec![
-            crate::services::llm_client::ChatMessage {
-                role: "user".to_string(),
-                content: request.prompt,
-            }
-        ],
+        messages: vec![crate::services::llm_client::ChatMessage {
+            role: "user".to_string(),
+            content: request.prompt,
+        }],
         stream: true,
         extra: None,
     };
-    
+
     let start = std::time::Instant::now();
-    
-    match client.chat(chat_request, None, Some(&config.model_name)).await {
+
+    match client
+        .chat(chat_request, None, Some(&config.model_name))
+        .await
+    {
         Ok(result) => {
             if result.response.status().is_success() {
                 let mut full_response = String::new();
                 let mut bytes = result.response.bytes_stream();
-                
-                while let Some(chunk_result) = bytes.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            let text = String::from_utf8_lossy(&chunk);
-                            for line in text.lines() {
-                                if line.starts_with("data: ") {
-                                    let json_str = line.trim_start_matches("data: ").trim();
-                                    if json_str == "[DONE]" {
-                                        continue;
-                                    }
-                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                        let content = crate::services::llm_client::extract_response_content(&data);
-                                        full_response.push_str(&content);
-                                    }
-                                }
+                let mut decoder = WireStreamDecoder::new();
+
+                'upstream: loop {
+                    let (events, at_eof) = match bytes.next().await {
+                        Some(Ok(chunk)) => match decoder.push(&chunk) {
+                            Ok(events) => (events, false),
+                            Err(error) => {
+                                error!("解析流式响应失败: {}", error);
+                                break;
                             }
-                        }
-                        Err(e) => {
-                            error!("读取流式响应失败: {}", e);
+                        },
+                        Some(Err(error)) => {
+                            error!("读取流式响应失败: {}", error);
                             break;
                         }
+                        None => match decoder.finish() {
+                            Ok(events) => (events, true),
+                            Err(error) => {
+                                error!("解析流式响应尾部失败: {}", error);
+                                break;
+                            }
+                        },
+                    };
+
+                    for event in events {
+                        let payload = match event {
+                            WireEvent::Done => break 'upstream,
+                            WireEvent::Data(payload) => payload,
+                        };
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&payload) {
+                            full_response.push_str(&extract_stream_content(&data));
+                        }
+                    }
+
+                    if at_eof {
+                        break;
                     }
                 }
-                
+
                 let latency = start.elapsed().as_millis() as u64;
-                info!("流式测试成功, 总耗时: {}ms, 响应长度: {} 字符", latency, full_response.len());
-                broadcast_log(&state.broadcaster, "SUCCESS", &format!("流式连接测试成功, 总耗时: {}ms", latency));
+                info!(
+                    "流式测试成功, 总耗时: {}ms, 响应长度: {} 字符",
+                    latency,
+                    full_response.len()
+                );
+                broadcast_log(
+                    &state.broadcaster,
+                    "SUCCESS",
+                    &format!("流式连接测试成功, 总耗时: {}ms", latency),
+                );
                 Json(ApiResponse::success(StreamTestResult {
                     success: true,
                     message: format!("流式连接成功, 总耗时: {}ms", latency),
