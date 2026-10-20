@@ -51,6 +51,8 @@ npm run tauri -- build
 
 可执行文件与安装包会生成在 `src-tauri/target/release/` 和 `src-tauri/target/release/bundle/` 下。
 
-## 配置安全
+## 运行时配置
 
-`config.json` 可能包含 API 密钥和本机路径。提交前请确认其中没有真实凭据；GitHub Actions 构建不需要个人 API 密钥。
+程序从可执行文件同目录读取 `config.json`。文件不存在时使用内置默认配置，在应用中保存设置后写入配置文件。
+
+运行时配置可能包含 API 密钥和本机路径，应保留在本机。仓库已忽略根目录的 `config.json`、个人工具配置及参考资料；GitHub Actions 构建不需要个人 API 密钥。

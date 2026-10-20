@@ -104,3 +104,10 @@ rc-tauri*
 
 # Legacy code
 test/
+
+# Local runtime configuration and personal tooling/data
+/config.json
+/opencode.json
+/opencode.jsonc
+/案例.txt
+/昔莲精选参考音频.json
